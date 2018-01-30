@@ -16,7 +16,7 @@ python -c "import tensorflow as tf; print('tensorflow %s' % tf.__version__)"
 # Do not use "make test" or "make test-coverage" as they enable verbose mode
 # which renders travis output too slow to display in a browser.
 if [[ "$COVERAGE" == "true" ]]; then
-    nosetests -s --with-coverage pthbldr
+    nosetests -s --with-coverage tfbldr
 else
-    nosetests -s pthbldr
+    nosetests -s tfbldr
 fi
