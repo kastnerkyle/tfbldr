@@ -9,6 +9,27 @@ from tfdllib import LogBernoulliAndCorrelatedLogGMMCost
 import tensorflow as tf
 import numpy as np
 
+import os
+import shutil
+
+# https://github.com/Grzego/handwriting-generation/blob/master/utils.py
+def next_experiment_path():
+    """
+    creates paths for new experiment
+    returns path for next experiment
+    """
+
+    idx = 0
+    path = os.path.join('summary', 'experiment-{}')
+    while os.path.exists(path.format(idx)):
+        idx += 1
+    path = path.format(idx)
+    os.makedirs(os.path.join(path, 'models'))
+    os.makedirs(os.path.join(path, 'backup'))
+    for file in filter(lambda x: x.endswith('.py'), os.listdir('.')):
+        shutil.copy2(file, os.path.join(path, 'backup'))
+    return path
+
 iamondb = rsync_fetch(fetch_iamondb, "leto01")
 data = iamondb["data"]
 target = iamondb["target"]
@@ -118,6 +139,10 @@ corrs = p[4]
 cost = LogBernoulliAndCorrelatedLogGMMCost(
     log_bernoullis, coeffs, mus, log_sigmas, corrs, y_t)
 loss = tf.reduce_mean(cost)
+summary = tf.summary.merge([
+    tf.summary.scalar('loss', loss)
+])
+
 params_dict = get_params_dict()
 params = params_dict.values()
 grads = tf.gradients(cost, params)
@@ -149,12 +174,12 @@ def loop(itr, sess, extras):
             init_att_w: init_att_w_np}
 
     if extras["train"]:
-        outs = [loss, updates]
-        train_loss, _ = sess.run(outs, feed)
+        outs = [loss, summary, updates]
+        train_loss, train_summary, _ = sess.run(outs, feed)
     else:
-        outs = [loss,]
-        train_loss = sess.run(outs, feed)[0]
-    return [train_loss]
+        outs = [loss, summary]
+        train_loss, train_summary = sess.run(outs, feed)[0]
+    return [train_loss, train_summary]
 
 sess = tf.Session()
 
@@ -162,32 +187,31 @@ with sess.as_default():
     tf.global_variables_initializer().run()
     print_network(get_params_dict())
     av = tf.global_variables()
+    model_saver = tf.train.Saver(max_to_keep=2)
+    experiment_path = next_experiment_path()
+
+    global_step = 0
+    summary_writer = tf.summary.FileWriter(experiment_path, flush_secs=10)
+    summary_writer.add_session_log(tf.SessionLog(status=tf.SessionLog.START),
+                                   global_step=global_step)
+
     for e in range(30):
         print(" ")
         print("Epoch {}".format(e))
-        train_loss_traces = []
         try:
             print(" ")
             print("Training started")
+            b = 0
             while True:
                 ret = loop(train_itr, sess, {"train": True})
-                train_loss_traces.append(ret[0])
-                print(".", end="")
+                b += 1
+                global_step += 1
+                l = ret[0]
+                s = ret[1]
+                print('\r[{:5d}/{:5d}] loss = {}'.format(b * n_batch, len(target), l), end='')
+                summary_writer.add_summary(s, global_step=global_step)
         except StopIteration:
             print(" ")
             print("Training done")
-            print(np.mean(train_loss_traces))
+            model_saver.save(sess, os.path.join(experiment_path, 'models', 'model'), global_step=e)
             train_itr.reset()
-
-        """
-        try:
-            print(" ")
-            print("Validation started")
-            while True:
-                loop(train_itr, sess, {"train": False})
-                print(".", end="")
-        except StopIteration:
-            print(" ")
-            print("Validation done")
-            train_itr.reset()
-        """
