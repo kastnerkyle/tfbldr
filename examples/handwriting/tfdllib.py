@@ -353,7 +353,7 @@ def scan(fn, sequences, outputs_info):
             raise ValueError("Ndim too different to correct")
 
     def check(l):
-        shapes = [shape(s) for s in l]
+        shapes = [shape(s) for s in l if s is not None]
         # for now assume -1, can add axis argument later
         # check shapes match for concatenation
         compat = [ls for ls in shapes if ls[:-1] == shapes[0][:-1]]
@@ -366,9 +366,12 @@ def scan(fn, sequences, outputs_info):
     seqs_shapes = [shape(s) for s in sequences]
     nd = len(seqs_shapes[0])
     seq_pack = tf.concat(sequences, nd - 1)
-    outs_shapes = [shape(o) for o in outputs_info]
+    outs_shapes = [shape(o) for o in outputs_info if o is not None]
     nd = len(outs_shapes[0])
-    init_pack = tf.concat(outputs_info, nd - 1)
+    init_pack = tf.concat([o for o in outputs_info if o is not None], nd - 1)
+
+    if None in outputs_info:
+        raise ValueError("None in outputs_info not currently supported")
 
     assert len(shape(seq_pack)) == 3
     assert len(shape(init_pack)) == 2
@@ -437,6 +440,7 @@ def Linear(list_of_inputs, list_of_input_dims, output_dim, random_state, name=No
     name_w = name + "_linear_w"
     name_b = name + "_linear_b"
     name_wn = name + "_linear_wn"
+    name_out = name + "_linear_out"
     if strict:
         cur_defs = get_params_dict()
         if name_w in cur_defs:
@@ -451,7 +455,7 @@ def Linear(list_of_inputs, list_of_input_dims, output_dim, random_state, name=No
     try:
         weight = _get_shared(name_w)
     except NameError:
-        weight = tf.Variable(weight_values, trainable=True)
+        weight = tf.Variable(weight_values, trainable=True, name=name_w)
         _set_shared(name_w, weight)
 
     # Weight normalization... Kingma and Salimans
@@ -461,7 +465,7 @@ def Linear(list_of_inputs, list_of_input_dims, output_dim, random_state, name=No
         try:
             norms = _get_shared(name_wn)
         except NameError:
-            norms = tf.Variable(norm_values, trainable=True)
+            norms = tf.Variable(norm_values, trainable=True, name=name_wn)
             _set_shared(name_wn, norms)
         norm = tf.sqrt(tf.reduce_sum(tf.abs(weight ** 2), reduction_indices=[0],
                                      keep_dims=True))
@@ -478,10 +482,11 @@ def Linear(list_of_inputs, list_of_input_dims, output_dim, random_state, name=No
         try:
             biases = _get_shared(name_b)
         except NameError:
-            biases = tf.Variable(b, trainable=True)
+            biases = tf.Variable(b, trainable=True, name=name_b)
             _set_shared(name_b, biases)
         terms.append(biases)
     out = reduce(lambda a, b: a + b, terms)
+    out = tf.identity(out, name=name_out)
     return out
 
 
@@ -582,6 +587,7 @@ def GRU(inp, gate_inp, previous_state, input_dim, hidden_dim, random_state,
         next_state = tf.tanh(f2 + inp)
         next_state = next_state * update + previous_state * (1. - update)
         next_state = mask * next_state + (1. - mask) * previous_state
+        next_state = tf.identity(next_state, name=name + "_next_state")
         return next_state
 
 
@@ -644,7 +650,6 @@ def GaussianAttention(list_of_step_inputs, list_of_step_input_dims,
         name = _get_name()
     name = name + "_gaussian_attention"
 
-
     #TODO: specialize for jose style init...
     if init == "default":
         forward_init = None
@@ -694,7 +699,7 @@ def GaussianAttention(list_of_step_inputs, list_of_step_input_dims,
     h_sub_t = _slice_state(h_t, next_proj_dim)
     ret = Linear(
         list_of_inputs=[h_sub_t], list_of_input_dims=[next_proj_dim],
-        output_dim=3 * att_dim, name=name, weight_norm=weight_norm,
+        output_dim=3 * att_dim, name=name + "_group", weight_norm=weight_norm,
         random_state=random_state,
         strict=strict, init=forward_init)
     a_t = ret[:, :att_dim]
@@ -709,6 +714,8 @@ def GaussianAttention(list_of_step_inputs, list_of_step_input_dims,
 
     a_t = tf.exp(a_t)
     b_t = tf.exp(b_t)
+    a_t = tf.identity(a_t, name=name + "_a_scale")
+    b_t = tf.identity(b_t, name=name + "_b_scale")
     step_size = average_step * tf.exp(k_t)
     """
     if max_step is None:
@@ -718,6 +725,7 @@ def GaussianAttention(list_of_step_inputs, list_of_step_input_dims,
     step_size = step_size.clip(min_step, max_step)
     """
     k_t = k_tm1 + step_size
+    k_t = tf.identity(k_t, name=name + "_position")
     # Don't let the gaussian go off the end
     #k_t = k_t.clip(np.cast["float32"](0.), tensor.cast(ctx.shape[0], "float32"))
 
@@ -732,6 +740,7 @@ def GaussianAttention(list_of_step_inputs, list_of_step_input_dims,
         return ss4
 
     ss_t = calc_phi(k_t, a_t, b_t, u)
+    ss_t = tf.identity(ss_t, name=name + "_phi")
 
     # calculate and return stopping criteria
     #sh_t = calc_phi(k_t, a_t, b_t, u_max)
@@ -739,7 +748,8 @@ def GaussianAttention(list_of_step_inputs, list_of_step_input_dims,
     # mask using conditioning mask
     ss6 = ss5 * tf.transpose(ctx, (1, 0, 2)) * tf.transpose(tf.expand_dims(ctx_mask, axis=2), (1, 0, 2))
     w_t = tf.reduce_sum(ss6, axis=1)
-    return h_t, k_t, w_t
+    w_t = tf.identity(w_t, name=name + "_post_weighting")
+    return h_t, k_t, w_t, ss_t
 
 
 def LogBernoulliAndCorrelatedLogGMM(
@@ -776,39 +786,46 @@ def LogBernoulliAndCorrelatedLogGMM(
 
     mus = Linear(
         list_of_inputs=list_of_inputs, list_of_input_dims=list_of_input_dims,
-        output_dim=n_components * output_dim, name=name + "_mus",
+        output_dim=n_components * output_dim, name=name + "_mus_pre",
         weight_norm=weight_norm, random_state=random_state,
         strict=strict, init=init)
+    mus = _reshape(mus)
+    mus = tf.identity(mus, name=name + "_mus")
+
     log_sigmas = Linear(
         list_of_inputs=list_of_inputs, list_of_input_dims=list_of_input_dims,
-        output_dim=n_components * output_dim, name=name + "_log_sigmas",
+        output_dim=n_components * output_dim, name=name + "_log_sigmas_pre",
         weight_norm=weight_norm, random_state=random_state,
         strict=strict, init=init)
+    log_sigmas = _reshape(log_sigmas)
+    log_sigmas = tf.identity(log_sigmas, name=name + "_log_sigmas")
+
     coeffs = Linear(
         list_of_inputs=list_of_inputs, list_of_input_dims=list_of_input_dims,
-        output_dim=n_components, name=name + "_coeffs",
+        output_dim=n_components, name=name + "_coeffs_pre",
         weight_norm=weight_norm, random_state=random_state,
         strict=strict, init=init)
     coeffs = tf.nn.softmax(coeffs)
-    mus = _reshape(mus)
-    log_sigmas = _reshape(log_sigmas)
     coeffs = _reshape(coeffs, 1)
+    coeffs = tf.identity(coeffs, name=name + "_coeffs")
 
     calc_corr = int(factorial(output_dim ** 2 // 2 - 1))
-    corr = Linear(
+    corrs = Linear(
         list_of_inputs=list_of_inputs, list_of_input_dims=list_of_input_dims,
-        output_dim=n_components * calc_corr, name=name + "_corr",
+        output_dim=n_components * calc_corr, name=name + "_corrs_pre",
         weight_norm=weight_norm, random_state=random_state,
         strict=strict, init=init)
-    corr = tf.tanh(corr)
-    corr = _reshape(corr, calc_corr)
+    corrs = tf.tanh(corrs)
+    corrs = _reshape(corrs, calc_corr)
+    corrs = tf.identity(corrs, name + "_corrs")
 
-    log_bernoulli = Linear(
+    log_bernoullis = Linear(
         list_of_inputs=list_of_inputs, list_of_input_dims=list_of_input_dims,
-        output_dim=1, name=name + "_log_bernoulli",
+        output_dim=1, name=name + "_log_bernoullis_pre",
         weight_norm=weight_norm, random_state=random_state,
         strict=strict, init=init)
-    return log_bernoulli, coeffs, mus, log_sigmas, corr
+    log_bernoullis = tf.identity(log_bernoullis, name + "_log_bernoullis")
+    return log_bernoullis, coeffs, mus, log_sigmas, corrs
 
 
 # from A d B
@@ -821,7 +838,7 @@ def _logsumexp(inputs, axis=-1):
 
 def LogBernoulliAndCorrelatedLogGMMCost(
     log_bernoulli_values, coeff_values, mu_values, log_sigma_values, corr_values,
-    true_values):
+    true_values, name=None):
     """
     Log bernoulli combined with correlated gaussian mixture model negative log
     likelihood compared to true_values.
@@ -853,6 +870,11 @@ def LogBernoulliAndCorrelatedLogGMMCost(
     [2] Statlect.com
         http://www.statlect.com/normal_distribution_maximum_likelihood.htm
     """
+    if name == None:
+        name = _get_name()
+    else:
+        name = name
+
     tv = true_values
     if len(shape(tv)) == 3:
         true_values = tf.expand_dims(tv, axis=2)
@@ -860,7 +882,6 @@ def LogBernoulliAndCorrelatedLogGMMCost(
         true_values = tf.expand_dims(tv, axis=1)
     else:
         raise ValueError("shape of labels not currently supported {}".format(shape(tv)))
-
 
     def _subslice(arr, idx):
         if len(shape(arr)) == 3:
@@ -882,6 +903,7 @@ def LogBernoulliAndCorrelatedLogGMMCost(
     # thanks to DWF
     a, t = log_bernoulli_values, true_0
     c_b = -1. * tf.reduce_sum(t * tf.nn.softplus(-a) + (1. - t) * tf.nn.softplus(a), axis=len(shape(t)) - 1)
+    c_b = tf.identity(c_b, name=name + "_binary_nll")
 
     corr_values = _subslice(corr_values, 0)
     coeff_values = _subslice(coeff_values, 0)
@@ -898,6 +920,12 @@ def LogBernoulliAndCorrelatedLogGMMCost(
 
     inner2 = .5 * (1. / buff)
     cost = -(inner1 + z * inner2)
-    nll = -_logsumexp(cost + tf.log(coeff_values),
+    cost = tf.identity(cost, name=name + "_gaussian_nll")
+
+    coeff_log = tf.log(coeff_values)
+    coeff_log = tf.identity(coeff_log, name=name + "_coeff_entropy")
+
+    nll = -_logsumexp(cost + coeff_log,
                       axis=len(shape(coeff_values)) - 1) - c_b
+    nll = tf.identity(nll, name=name + "_full_nll")
     return nll

@@ -48,15 +48,24 @@ n_attention = 10
 h_dim = 256
 n_batch = trace_mb.shape[1]
 
-X_char = tf.placeholder(tf.float32, shape=[None, n_batch, n_letters])
-y_pen = tf.placeholder(tf.float32, shape=[None, n_batch, 3])
-init_h1 = tf.placeholder(tf.float32, [n_batch, h_dim])
-init_h2 = tf.placeholder(tf.float32, [n_batch, h_dim])
-init_h3 = tf.placeholder(tf.float32, [n_batch, h_dim])
-init_att_h = tf.placeholder(tf.float32, [n_batch, h_dim])
-init_att_k = tf.placeholder(tf.float32, [n_batch, n_attention])
-init_att_w = tf.placeholder(tf.float32, [n_batch, n_letters])
-bias = tf.placeholder_with_default(tf.zeros(shape=[]), shape=[])
+X_char = tf.placeholder(tf.float32, shape=[None, n_batch, n_letters],
+                        name="X_char")
+y_pen = tf.placeholder(tf.float32, shape=[None, n_batch, 3],
+                       name="y_pen")
+init_h1 = tf.placeholder(tf.float32, [n_batch, h_dim],
+                         name="init_h1")
+init_h2 = tf.placeholder(tf.float32, [n_batch, h_dim],
+                         name="init_h2")
+init_h3 = tf.placeholder(tf.float32, [n_batch, h_dim],
+                         name="init_h3")
+init_att_h = tf.placeholder(tf.float32, [n_batch, h_dim],
+                            name="init_att_h")
+init_att_k = tf.placeholder(tf.float32, [n_batch, n_attention],
+                            name="init_att_k")
+init_att_w = tf.placeholder(tf.float32, [n_batch, n_letters],
+                            name="init_att_w")
+bias = tf.placeholder_with_default(tf.zeros(shape=[]), shape=[],
+                                   name="bias")
 
 y_tm1 = y_pen[:-1, :, :]
 y_t = y_pen[1:, :, :]
@@ -88,7 +97,7 @@ def step(inp_t, h1_tm1, h2_tm1, h3_tm1, att_h_tm1, att_k_tm1, att_w_tm1):
                           init=rnn_init,
                           )
 
-    att_h_t, att_k_t, att_w_t = r
+    att_h_t, att_k_t, att_w_t, att_phi_t = r
 
     fork1_t, fork1_gate_t = GRUFork([inp_t, att_w_t], [h_dim, n_letters], h_dim,
                                     weight_norm=use_weight_norm,
@@ -119,14 +128,18 @@ def step(inp_t, h1_tm1, h2_tm1, h3_tm1, att_h_tm1, att_k_tm1, att_w_tm1):
     return h1_t, h2_t, h3_t, att_h_t, att_k_t, att_w_t
 
 
-o = scan(step, [proj_inp], [init_h1, init_h2, init_h3,
-                            init_att_h, init_att_k, init_att_w])
+o = scan(step, [proj_inp], [init_h1, init_h2, init_h3, init_att_h, init_att_k, init_att_w])
 h1_o = o[0]
-att_h = o[1]
-att_k = o[2]
-att_w = o[3]
+h2_o = o[1]
+h3_o = o[2]
+att_h = o[3]
+att_k = o[4]
+att_w = o[5]
 
-p = LogBernoulliAndCorrelatedLogGMM([h1_o], [h_dim], name="b_log_gmm",
+att_k = tf.identity(att_k, name="att_k")
+att_w = tf.identity(att_w, name="att_w")
+
+p = LogBernoulliAndCorrelatedLogGMM([h3_o], [h_dim], name="b_log_gmm",
                                     weight_norm=use_weight_norm,
                                     random_state=random_state,
                                     init=forward_init)
@@ -137,7 +150,7 @@ log_sigmas = p[3]
 corrs = p[4]
 
 cost = LogBernoulliAndCorrelatedLogGMMCost(
-    log_bernoullis, coeffs, mus, log_sigmas, corrs, y_t)
+    log_bernoullis, coeffs, mus, log_sigmas, corrs, y_t, name="cost")
 loss = tf.reduce_mean(cost)
 summary = tf.summary.merge([
     tf.summary.scalar('loss', loss)
@@ -145,7 +158,7 @@ summary = tf.summary.merge([
 
 params_dict = get_params_dict()
 params = params_dict.values()
-grads = tf.gradients(cost, params)
+grads = tf.gradients(loss, params)
 
 learning_rate = .0002
 if norm_clip:
@@ -189,13 +202,14 @@ with sess.as_default():
     av = tf.global_variables()
     model_saver = tf.train.Saver(max_to_keep=2)
     experiment_path = next_experiment_path()
+    print("Using experiment path {}".format(experiment_path))
 
     global_step = 0
     summary_writer = tf.summary.FileWriter(experiment_path, flush_secs=10)
     summary_writer.add_session_log(tf.SessionLog(status=tf.SessionLog.START),
                                    global_step=global_step)
 
-    for e in range(30):
+    for e in range(15):
         print(" ")
         print("Epoch {}".format(e))
         try:
