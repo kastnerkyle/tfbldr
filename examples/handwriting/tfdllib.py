@@ -415,7 +415,8 @@ def scan(fn, sequences, outputs_info):
 
 
 def Linear(list_of_inputs, list_of_input_dims, output_dim, random_state, name=None,
-           init=None, scale="default", weight_norm=None, biases=True, strict=True):
+           init=None, scale="default", weight_norm=None, biases=True, bias_offset=0.,
+           strict=True):
     """
     Can pass weights and biases directly if needed through init
     """
@@ -479,6 +480,7 @@ def Linear(list_of_inputs, list_of_input_dims, output_dim, random_state, name=No
             b, = make_numpy_biases([output_dim])
         else:
             b = init[1]
+        b = b + bias_offset
         try:
             biases = _get_shared(name_b)
         except NameError:
@@ -763,7 +765,7 @@ def LogBernoulliAndCorrelatedLogGMM(
     if name is None:
         name = _get_name()
     else:
-        name = name + "_bernoulli_and_correlated_log_gaussian_mixture"
+        name = name + "_log_bernoulli_and_correlated_log_gaussian_mixture"
 
 
     def _reshape(l, d=n_components):
@@ -826,6 +828,85 @@ def LogBernoulliAndCorrelatedLogGMM(
         strict=strict, init=init)
     log_bernoullis = tf.identity(log_bernoullis, name + "_log_bernoullis")
     return log_bernoullis, coeffs, mus, log_sigmas, corrs
+
+
+def BernoulliAndCorrelatedGMM(
+        list_of_inputs, list_of_input_dims, output_dim=2, name=None, n_components=5,
+        weight_norm=None, random_state=None, strict=True,
+        init=None):
+    """
+    returns log_bernoulli, coeffs, mus, log_sigmas, corr
+    """
+    assert n_components >= 1
+    if name is None:
+        name = _get_name()
+    else:
+        name = name + "_bernoulli_and_correlated_gaussian_mixture"
+
+
+    def _reshape(l, d=n_components):
+        if d == 1:
+            shp = shape(l)
+            t = tf.reshape(l, shp[:-1] + [1, shp[-1]])
+            return t
+        if len(shape(l)) == 2:
+            t = tf.reshape(l, (-1, output_dim, d))
+        elif len(shape(l)) == 3:
+            shp = shape(l)
+            t = tf.reshape(l, (-1, shp[1], output_dim, d))
+        else:
+            raise ValueError("input ndim not supported for gaussian "
+                             "mixture layer")
+        return t
+
+    if output_dim != 2:
+        raise ValueError("General calculation for GMM not yet implemented")
+
+    mus = Linear(
+        list_of_inputs=list_of_inputs, list_of_input_dims=list_of_input_dims,
+        output_dim=n_components * output_dim, name=name + "_mus_pre",
+        weight_norm=weight_norm, random_state=random_state,
+        strict=strict, init=init)
+    mus = _reshape(mus)
+    mus = tf.identity(mus, name=name + "_mus")
+
+    sigmas = Linear(
+        list_of_inputs=list_of_inputs, list_of_input_dims=list_of_input_dims,
+        output_dim=n_components * output_dim, name=name + "_sigmas_pre",
+        weight_norm=weight_norm, random_state=random_state,
+        strict=strict, init=init)
+    sigmas = tf.exp(sigmas)
+    sigmas = _reshape(sigmas)
+    sigmas = tf.identity(sigmas, name=name + "_sigmas")
+
+    coeffs = Linear(
+        list_of_inputs=list_of_inputs, list_of_input_dims=list_of_input_dims,
+        output_dim=n_components, name=name + "_coeffs_pre",
+        weight_norm=weight_norm, random_state=random_state,
+        strict=strict, init=init)
+    coeffs = tf.nn.softmax(coeffs)
+    coeffs = _reshape(coeffs, 1)
+    coeffs = tf.identity(coeffs, name=name + "_coeffs")
+
+    calc_corr = int(factorial(output_dim ** 2 // 2 - 1))
+    corrs = Linear(
+        list_of_inputs=list_of_inputs, list_of_input_dims=list_of_input_dims,
+        output_dim=n_components * calc_corr, name=name + "_corrs_pre",
+        weight_norm=weight_norm, random_state=random_state,
+        strict=strict, init=init)
+    corrs = tf.tanh(corrs)
+    corrs = _reshape(corrs, calc_corr)
+    corrs = tf.identity(corrs, name + "_corrs")
+
+    bernoullis = Linear(
+        list_of_inputs=list_of_inputs, list_of_input_dims=list_of_input_dims,
+        output_dim=1, name=name + "_bernoullis_pre",
+        weight_norm=weight_norm, random_state=random_state,
+        bias_offset=0.5,
+        strict=strict, init=init)
+    bernoullis = tf.nn.sigmoid(bernoullis)
+    bernoullis = tf.identity(bernoullis, name + "_bernoullis")
+    return bernoullis, coeffs, mus, sigmas, corrs
 
 
 # from A d B
@@ -928,4 +1009,89 @@ def LogBernoulliAndCorrelatedLogGMMCost(
     nll = -_logsumexp(cost + coeff_log,
                       axis=len(shape(coeff_values)) - 1) - c_b
     nll = tf.identity(nll, name=name + "_full_nll")
+    return nll
+
+
+def BernoulliAndCorrelatedGMMCost(
+    bernoulli_values, coeff_values, mu_values, sigma_values, corr_values,
+    true_values, name=None):
+    """
+    Gernoulli combined with correlated gaussian mixture model negative log
+    likelihood compared to true_values.
+
+    This is typically paired with BernoulliAndCorrelatedGMM
+
+    Based on implementation from Junyoung Chung and Grzego
+    https://github.com/Grzego/handwriting-generation/blob/master/train.py
+
+    Parameters
+    ----------
+    bernoulli_values : tensor, shape
+        The predicted values out of some layer, normally a sigmoid layer
+    coeff_values : tensor, shape
+        The predicted values out of some layer, normally a softmax layer
+    mu_values : tensor, shape
+        The predicted values out of some layer, normally a linear layer
+    sigma_values : tensor, shape
+        The predicted values out of some layer, normally a exponential layer
+    true_values : tensor, shape[:-1]
+        Ground truth values. Must be the same shape as mu_values.shape[:-1].
+    Returns
+    -------
+    nll : tensor, shape predicted_values.shape[1:]
+        The cost per sample, or per sample per step if 3D
+    References
+    ----------
+    [1] University of Utah Lectures
+        http://www.cs.utah.edu/~piyush/teaching/gmm.pdf
+    [2] Statlect.com
+        http://www.statlect.com/normal_distribution_maximum_likelihood.htm
+    """
+    if name == None:
+        name = _get_name()
+    else:
+        name = name
+
+    tv = true_values
+    if len(shape(tv)) == 3:
+        true_values = tf.expand_dims(tv, axis=2)
+    elif len(shape(tv)) == 2:
+        true_values = tf.expand_dims(tv, axis=1)
+    else:
+        raise ValueError("shape of labels not currently supported {}".format(shape(tv)))
+
+    def _subslice(arr, idx):
+        if len(shape(arr)) == 3:
+            return arr[:, idx]
+        elif len(shape(arr)) == 4:
+            return arr[:, :, idx]
+        raise ValueError("Unsupported ndim {}".format(shape(arr)))
+
+    mu_1 = _subslice(mu_values, 0)
+    mu_2 = _subslice(mu_values, 1)
+
+    sigma_1 = _subslice(sigma_values, 0)
+    sigma_2 = _subslice(sigma_values, 1)
+
+    true_0 = true_values[..., 0]
+    true_1 = true_values[..., 1]
+    true_2 = true_values[..., 2]
+
+    corr_values = _subslice(corr_values, 0)
+    coeff_values = _subslice(coeff_values, 0)
+
+    epsilon = 1E-8
+    buff = 1 - corr_values ** 2 + epsilon
+
+    xms = (true_1 - mu_1) / sigma_1
+    yms = (true_2 - mu_2) / sigma_2
+    z = tf.square(xms) + tf.square(yms) - 2. * corr_values * xms * yms
+    n = 1. / (2. * np.pi * sigma_1 * sigma_2 * tf.sqrt(buff)) * tf.exp(-z / (2. * buff))
+
+    ep = true_0 * bernoulli_values + (1. - true_0) * (1. - bernoulli_values)
+    # sum out the last axis (dimension of 1)
+    ep = tf.reduce_sum(ep, axis=2)
+    rp = tf.reduce_sum(coeff_values * n, axis=2)
+
+    nll = -tf.log(rp + epsilon) - tf.log(ep + epsilon)
     return nll

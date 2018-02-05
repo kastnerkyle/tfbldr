@@ -133,7 +133,8 @@ train_itr.reset()
 n_letters = len(iamondb["vocabulary"])
 random_state = np.random.RandomState(args.seed)
 n_attention = 10
-h_dim = 256
+cut_len = 300
+h_dim = 400
 n_batch = trace_mb.shape[1]
 
 with tf.Session() as sess:
@@ -148,8 +149,11 @@ with tf.Session() as sess:
     init_att_w_np = np.zeros((n_batch, n_letters)).astype("float32")
 
     everything = [n.name for n in tf.get_default_graph().as_graph_def().node]
+
     X_char = graph.get_tensor_by_name("X_char:0")
+    X_char_mask = graph.get_tensor_by_name("X_char_mask:0")
     y_pen = graph.get_tensor_by_name("y_pen:0")
+    y_pen_mask = graph.get_tensor_by_name("y_pen_mask:0")
     init_h1 = graph.get_tensor_by_name("init_h1:0")
     init_h2 = graph.get_tensor_by_name("init_h2:0")
     init_h3 = graph.get_tensor_by_name("init_h3:0")
@@ -158,7 +162,9 @@ with tf.Session() as sess:
     init_att_w = graph.get_tensor_by_name("init_att_w:0")
     bias = graph.get_tensor_by_name("bias:0")
     feed = {X_char: text_mb,
+            X_char_mask: text_mask,
             y_pen: trace_mb,
+            y_pen_mask: trace_mask,
             init_h1: init_h1_np,
             init_h2: init_h2_np,
             init_h3: init_h3_np,
@@ -166,12 +172,12 @@ with tf.Session() as sess:
             init_att_k: init_att_k_np,
             init_att_w: init_att_w_np}
 
-    log_bernoullis = graph.get_tensor_by_name("b_log_gmm_bernoulli_and_correlated_log_gaussian_mixture_log_bernoullis:0")
-    coeffs = graph.get_tensor_by_name("b_log_gmm_bernoulli_and_correlated_log_gaussian_mixture_coeffs:0")
-    mus = graph.get_tensor_by_name("b_log_gmm_bernoulli_and_correlated_log_gaussian_mixture_mus:0")
-    log_sigmas = graph.get_tensor_by_name("b_log_gmm_bernoulli_and_correlated_log_gaussian_mixture_log_sigmas:0")
-    corrs = graph.get_tensor_by_name("b_log_gmm_bernoulli_and_correlated_log_gaussian_mixture_corrs:0")
-    desired_outs = [log_bernoullis, coeffs, mus, log_sigmas, corrs]
+    bernoullis = graph.get_tensor_by_name("b_gmm_bernoulli_and_correlated_gaussian_mixture_bernoullis:0")
+    coeffs = graph.get_tensor_by_name("b_gmm_bernoulli_and_correlated_gaussian_mixture_coeffs:0")
+    mus = graph.get_tensor_by_name("b_gmm_bernoulli_and_correlated_gaussian_mixture_mus:0")
+    sigmas = graph.get_tensor_by_name("b_gmm_bernoulli_and_correlated_gaussian_mixture_sigmas:0")
+    corrs = graph.get_tensor_by_name("b_gmm_bernoulli_and_correlated_gaussian_mixture_corrs:0")
+    desired_outs = [bernoullis, coeffs, mus, sigmas, corrs]
     r_outs = sess.run(desired_outs, feed)
 
     att_k = graph.get_tensor_by_name("att_k:0")
@@ -181,14 +187,15 @@ with tf.Session() as sess:
     att_k_np = r_atts[0]
     att_w_np = r_atts[1]
 
-    log_bernoullis_np = r_outs[0]
+    bernoullis_np = r_outs[0]
     coeffs_np = r_outs[1]
     mus_np = r_outs[2]
-    log_sigmas_np = r_outs[3]
+    sigmas_np = r_outs[3]
     corrs_np = r_outs[4]
-    bernoullis_np = sigmoid(log_bernoullis_np)
+    coeffs_np = coeffs_np / (coeffs_np.sum(axis=-1)[:, :, :, None] + 1E-6)
+    #bernoullis_np = sigmoid(log_bernoullis_np)
     bias = 1.
-    sigmas_np = np.exp(log_sigmas_np - bias)
+    #sigmas_np = np.exp(log_sigmas_np - bias)
 
     choose = 0
     mus_i = mus_np[:, choose]
@@ -209,6 +216,8 @@ with tf.Session() as sess:
 
     f, axarr = plt.subplots(2, 1)
     #strokes = trace_mb[:, choose]
+    #res1 = res1[:cut_len]
+    #res2 = res2[:cut_len]
 
     strokes = res1
     strokes[:, 1:] = np.cumsum(strokes[:, 1:], axis=0)
