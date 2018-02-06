@@ -4,8 +4,8 @@ from tfdllib import Linear, scan, get_params_dict, print_network
 from tfdllib import GRUFork
 from tfdllib import GRU
 from tfdllib import GaussianAttention
-from tfdllib import BernoulliAndCorrelatedGMM
-from tfdllib import BernoulliAndCorrelatedGMMCost
+from tfdllib import LogitBernoulliAndCorrelatedLogitGMM
+from tfdllib import LogitBernoulliAndCorrelatedLogitGMMCost
 import tensorflow as tf
 import numpy as np
 
@@ -149,25 +149,31 @@ att_h = o[3]
 att_k = o[4]
 att_w = o[5]
 
+h1_o = tf.identity(h1_o, name="h1_o")
+h2_o = tf.identity(h2_o, name="h2_o")
+h3_o = tf.identity(h3_o, name="h3_o")
+att_h = tf.identity(att_h, name="att_h")
 att_k = tf.identity(att_k, name="att_k")
 att_w = tf.identity(att_w, name="att_w")
 
-p = BernoulliAndCorrelatedGMM([h3_o], [h_dim], name="b_gmm",
-                              n_components=n_mdn,
-                              weight_norm=use_weight_norm,
-                              random_state=random_state,
-                              init=forward_init)
-bernoullis = p[0]
-coeffs = p[1]
+p = LogitBernoulliAndCorrelatedLogitGMM([h3_o], [h_dim], name="b_gmm",
+                                        n_components=n_mdn,
+                                        weight_norm=use_weight_norm,
+                                        random_state=random_state,
+                                        init=forward_init)
+logit_bernoullis = p[0]
+logit_coeffs = p[1]
 mus = p[2]
-sigmas = p[3]
+logit_sigmas = p[3]
 corrs = p[4]
 
-cost = BernoulliAndCorrelatedGMMCost(
-    bernoullis, coeffs, mus, sigmas, corrs, y_t, name="cost")
-#masked_cost = y_pen_mask * cost
-#loss = tf.reduce_sum(cost) / tf.reduce_sum(y_pen_mask)
+#cost = BernoulliAndCorrelatedGMMCost(
+#    bernoullis, coeffs, mus, sigmas, corrs, y_t, name="cost")
+cost = LogitBernoulliAndCorrelatedLogitGMMCost(
+    logit_bernoullis, logit_coeffs, mus, logit_sigmas, corrs, y_t, name="cost")
 loss = tf.reduce_mean(cost)
+#masked_cost = y_pen_mask * cost
+#loss = tf.reduce_sum(cost / (tf.reduce_sum(y_pen_mask) + 1.))
 
 params_dict = get_params_dict()
 params = params_dict.values()

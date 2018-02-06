@@ -45,10 +45,14 @@ def split_strokes(points):
         if points[e, 0] == 1.:
             strokes += [points[b: e + 1, 1:].copy()]
             b = e + 1
+        elif e == (len(points) - 1):
+            # get last stroke
+            strokes += [points[b: e + 1, 1:].copy()]
     return strokes
 
 
 def sample(mu1, mu2, std1, std2, rho, pi, bernoulli):
+    # todo, vectorize...
     gs = []
     for i in range(len(pi)):
         g = np.random.choice(np.arange(pi[i].shape[0]), p=pi[i])
@@ -77,10 +81,13 @@ def sample(mu1, mu2, std1, std2, rho, pi, bernoulli):
 def numpy_sample_bernoulli_and_bivariate_gmm(mu, sigma, corr, coeff, binary,
                                              random_state, binary_threshold=0.5, epsilon=1E-5,
                                              use_map=False):
+    # todo, vectorize
     # only handles one example at a time
-    # renormalize coeff to assure sums to 1...
-    coeff = coeff / (coeff.sum(axis=-1, keepdims=True) + 1E-9)
-    idx = np.array([np.argmax(random_state.multinomial(1, coeff[i, :])) for i in range(len(coeff))])
+    gs = []
+    for i in range(len(coeff)):
+        g = random_state.choice(np.arange(coeff[i].shape[0]), p=coeff[i])
+        gs.append(g)
+    idx = np.array(gs)
 
     mu_i = mu[np.arange(len(mu)), :, idx]
     sigma_i = sigma[np.arange(len(sigma)), :, idx]
@@ -137,6 +144,181 @@ cut_len = 300
 h_dim = 400
 n_batch = trace_mb.shape[1]
 
+# real sample
+with tf.Session() as sess:
+    saver = tf.train.import_meta_graph(args.model_path + '.meta')
+    saver.restore(sess, args.model_path)
+    graph = tf.get_default_graph()
+    init_h1_np = np.zeros((n_batch, h_dim)).astype("float32")
+    init_h2_np = np.zeros((n_batch, h_dim)).astype("float32")
+    init_h3_np = np.zeros((n_batch, h_dim)).astype("float32")
+    init_att_h_np = np.zeros((n_batch, h_dim)).astype("float32")
+    init_att_k_np = np.zeros((n_batch, n_attention)).astype("float32")
+    init_att_w_np = np.zeros((n_batch, n_letters)).astype("float32")
+
+    everything = [n.name for n in tf.get_default_graph().as_graph_def().node]
+
+    X_char = graph.get_tensor_by_name("X_char:0")
+    X_char_mask = graph.get_tensor_by_name("X_char_mask:0")
+    y_pen = graph.get_tensor_by_name("y_pen:0")
+    y_pen_mask = graph.get_tensor_by_name("y_pen_mask:0")
+    init_h1 = graph.get_tensor_by_name("init_h1:0")
+    init_h2 = graph.get_tensor_by_name("init_h2:0")
+    init_h3 = graph.get_tensor_by_name("init_h3:0")
+    init_att_h = graph.get_tensor_by_name("init_att_h:0")
+    init_att_k = graph.get_tensor_by_name("init_att_k:0")
+    init_att_w = graph.get_tensor_by_name("init_att_w:0")
+
+    bias = graph.get_tensor_by_name("bias:0")
+    logit_bernoullis = graph.get_tensor_by_name("b_gmm_logit_bernoulli_and_correlated_logit_gaussian_mixture_logit_bernoullis:0")
+    logit_coeffs = graph.get_tensor_by_name("b_gmm_logit_bernoulli_and_correlated_logit_gaussian_mixture_logit_coeffs:0")
+    mus = graph.get_tensor_by_name("b_gmm_logit_bernoulli_and_correlated_logit_gaussian_mixture_mus:0")
+    logit_sigmas = graph.get_tensor_by_name("b_gmm_logit_bernoulli_and_correlated_logit_gaussian_mixture_logit_sigmas:0")
+    corrs = graph.get_tensor_by_name("b_gmm_logit_bernoulli_and_correlated_logit_gaussian_mixture_corrs:0")
+
+    att_k = graph.get_tensor_by_name("att_k:0")
+    att_w = graph.get_tensor_by_name("att_w:0")
+    att_h = graph.get_tensor_by_name("att_h:0")
+    h1_o = graph.get_tensor_by_name("h1_o:0")
+    h2_o = graph.get_tensor_by_name("h2_o:0")
+    h3_o = graph.get_tensor_by_name("h3_o:0")
+
+    prime = 50
+    all_res = [tmb for tmb in trace_mb[:2]]
+    all_res_mask = [0. * tm + 1. for tm in trace_mask[:2]]
+    all_att_h = [init_att_h_np,]
+    all_att_k = [init_att_k_np,]
+    all_att_w = [init_att_w_np,]
+    all_h1 = [init_h1_np,]
+    all_h2 = [init_h2_np,]
+    all_h3 = [init_h3_np,]
+    sample_len = 200
+    monitor = 20
+    for i in range(sample_len):
+        if i == (sample_len - 1):
+            print("Sampling step {}".format(i))
+        elif i % monitor == 0:
+            print("Sampling step {}".format(i))
+        #this_trace_mb = np.array(all_res[-prime:])
+        #this_trace_mask = np.array(all_res_mask[-prime:])
+        this_trace_mb = np.array(all_res[-prime:])
+        this_trace_mask = np.array(all_res_mask[-prime:])
+        this_init_att_h = np.array(all_att_h[-1])
+        this_init_att_k = np.array(all_att_k[-1])
+        this_init_att_w = np.array(all_att_w[-1])
+        this_init_h1 = np.array(all_h1[-1])
+        this_init_h2 = np.array(all_h2[-1])
+        this_init_h3 = np.array(all_h3[-1])
+
+        feed = {X_char: text_mb,
+                X_char_mask: text_mask,
+                y_pen: this_trace_mb,
+                y_pen_mask: this_trace_mask,
+                init_h1: init_h1_np,
+                init_h2: init_h2_np,
+                init_h3: init_h3_np,
+                init_att_h: init_att_h_np,
+                init_att_k: init_att_k_np,
+                init_att_w: init_att_w_np}
+
+        desired_outs = [logit_bernoullis, logit_coeffs, mus, logit_sigmas, corrs,
+                        att_h, att_k, att_w,
+                        h1_o, h2_o, h3_o]
+        r_outs = sess.run(desired_outs, feed)
+
+        logit_bernoullis_np = r_outs[0]
+        logit_coeffs_np = r_outs[1]
+        mus_np = r_outs[2]
+        logit_sigmas_np = r_outs[3]
+        corrs_np = r_outs[4]
+        att_h_np = r_outs[5]
+        att_k_np = r_outs[6]
+        att_w_np = r_outs[7]
+        h1_np = r_outs[8]
+        h2_np = r_outs[9]
+        h3_np = r_outs[10]
+
+        bias = 10.
+        sigmas_np = np.exp(logit_sigmas_np - bias)
+        coeffs_np = softmax(logit_coeffs_np)
+        #coeffs_np = softmax(logit_coeffs_np * (1. + bias))
+        bernoullis_np = sigmoid(logit_bernoullis_np)
+
+        # any of the 50, really
+        this_res = []
+        for choose in range(h1_np.shape[1]):
+            mus_i = mus_np[:, choose]
+            sigmas_i = sigmas_np[:, choose]
+            corrs_i = corrs_np[:, choose]
+            corrs_i = corrs_i[:, 0]
+            bernoullis_i = bernoullis_np[:, choose]
+            coeffs_i = coeffs_np[:, choose]
+            coeffs_i = coeffs_i[:, 0]
+            att_k_i = att_k_np[:, choose]
+            att_w_i = att_w_np[:, choose]
+            #res1 = sample(mus_i[:, 0], mus_i[:, 1], sigmas_i[:, 0], sigmas_i[:, 1], corrs_i, coeffs_i, bernoullis_i)
+            res = numpy_sample_bernoulli_and_bivariate_gmm(mus_i, sigmas_i, corrs_i, coeffs_i, bernoullis_i,
+                random_state=random_state)
+            this_res.append(res)
+        # now 1, minibatch_size, 3
+        this_res = np.array(this_res).transpose(1, 0, 2)
+        this_mask = 0. * this_res[-1, :, 0] + 1.
+        all_res.append(this_res[0])
+        all_res_mask.append(this_mask)
+        all_att_h.append(att_h_np[0])# = [init_att_h_np,]
+        all_att_k.append(att_k_np[0])# = [init_att_h_np,]
+        all_att_w.append(att_w_np[0])# = [init_att_k_np,]
+        all_h1.append(h1_np[0])
+        all_h2.append(h2_np[0])
+        all_h3.append(h3_np[0])
+
+        #all_att_w = [init_att_w_np,]
+        #all_h1 = [init_h1_np,]
+        #all_h2 = [init_h2_np,]
+        #all_h3 = [init_h3_np,]
+
+        """
+        init_h1_np[-1] = h1_np[-1]
+        init_h2_np[-1] = h2_np[-1]
+        init_h3_np[-1] = h3_np[-1]
+        init_att_h_np[-1] = att_h_np[-1]
+        init_att_k_np[-1] = att_k_np[-1]
+        init_att_w_np[-1] = att_w_np[-1]
+        """
+
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    if not os.path.exists("plots"):
+        os.mkdir("plots")
+
+    sampled_res = np.array(all_res)
+    final_att_k = np.array(all_att_k)
+    final_att_w = np.array(all_att_w)
+
+    for choose in range(sampled_res.shape[1]):
+        f, axarr = plt.subplots(2, 1)
+
+        strokes = sampled_res[:, choose]
+        final_att_k_i = final_att_k[:, choose]
+        final_att_w_i = final_att_w[:, choose]
+
+        strokes[:, 1:] = np.cumsum(strokes[:, 1:], axis=0)
+        minx, maxx = np.min(strokes[:, 1]), np.max(strokes[:, 1])
+        miny, maxy = np.min(strokes[:, 2]), np.max(strokes[:, 2])
+        split = split_strokes(strokes)
+        for sp in split:
+            axarr[0].plot(sp[:, 0], sp[:, 1])
+        axarr[1].imshow(final_att_w_i.T)
+        #axarr[1].plot(final_att_k_i.mean(axis=-1))
+        plt.savefig("plots/plot_results_{}.png".format(choose))
+        plt.clf()
+        plt.close()
+    from IPython import embed; embed(); raise ValueError()
+
+"""
+# cheat sample
 with tf.Session() as sess:
     saver = tf.train.import_meta_graph(args.model_path + '.meta')
     saver.restore(sess, args.model_path)
@@ -161,6 +343,15 @@ with tf.Session() as sess:
     init_att_k = graph.get_tensor_by_name("init_att_k:0")
     init_att_w = graph.get_tensor_by_name("init_att_w:0")
     bias = graph.get_tensor_by_name("bias:0")
+    log_bernoullis = graph.get_tensor_by_name("b_gmm_log_bernoulli_and_correlated_log_gaussian_mixture_log_bernoullis:0")
+    coeffs = graph.get_tensor_by_name("b_gmm_log_bernoulli_and_correlated_log_gaussian_mixture_coeffs:0")
+    mus = graph.get_tensor_by_name("b_gmm_log_bernoulli_and_correlated_log_gaussian_mixture_mus:0")
+    log_sigmas = graph.get_tensor_by_name("b_gmm_log_bernoulli_and_correlated_log_gaussian_mixture_log_sigmas:0")
+    corrs = graph.get_tensor_by_name("b_gmm_log_bernoulli_and_correlated_log_gaussian_mixture_corrs:0")
+
+    att_k = graph.get_tensor_by_name("att_k:0")
+    att_w = graph.get_tensor_by_name("att_w:0")
+
     feed = {X_char: text_mb,
             X_char_mask: text_mask,
             y_pen: trace_mb,
@@ -172,32 +363,24 @@ with tf.Session() as sess:
             init_att_k: init_att_k_np,
             init_att_w: init_att_w_np}
 
-    bernoullis = graph.get_tensor_by_name("b_gmm_bernoulli_and_correlated_gaussian_mixture_bernoullis:0")
-    coeffs = graph.get_tensor_by_name("b_gmm_bernoulli_and_correlated_gaussian_mixture_coeffs:0")
-    mus = graph.get_tensor_by_name("b_gmm_bernoulli_and_correlated_gaussian_mixture_mus:0")
-    sigmas = graph.get_tensor_by_name("b_gmm_bernoulli_and_correlated_gaussian_mixture_sigmas:0")
-    corrs = graph.get_tensor_by_name("b_gmm_bernoulli_and_correlated_gaussian_mixture_corrs:0")
-    desired_outs = [bernoullis, coeffs, mus, sigmas, corrs]
+    desired_outs = [log_bernoullis, coeffs, mus, log_sigmas, corrs]
     r_outs = sess.run(desired_outs, feed)
 
-    att_k = graph.get_tensor_by_name("att_k:0")
-    att_w = graph.get_tensor_by_name("att_w:0")
     desired_atts = [att_k, att_w]
     r_atts = sess.run(desired_atts, feed)
     att_k_np = r_atts[0]
     att_w_np = r_atts[1]
 
-    bernoullis_np = r_outs[0]
+    log_bernoullis_np = r_outs[0]
     coeffs_np = r_outs[1]
     mus_np = r_outs[2]
-    sigmas_np = r_outs[3]
+    log_sigmas_np = r_outs[3]
     corrs_np = r_outs[4]
-    coeffs_np = coeffs_np / (coeffs_np.sum(axis=-1)[:, :, :, None] + 1E-6)
-    #bernoullis_np = sigmoid(log_bernoullis_np)
-    bias = 1.
-    #sigmas_np = np.exp(log_sigmas_np - bias)
+    bernoullis_np = sigmoid(log_bernoullis_np)
+    bias = 100.
+    sigmas_np = np.exp(log_sigmas_np - bias)
 
-    choose = 0
+    choose = 45
     mus_i = mus_np[:, choose]
     sigmas_i = sigmas_np[:, choose]
     corrs_i = corrs_np[:, choose]
@@ -205,19 +388,19 @@ with tf.Session() as sess:
     bernoullis_i = bernoullis_np[:, choose]
     coeffs_i = coeffs_np[:, choose]
     coeffs_i = coeffs_i[:, 0]
-    #res = numpy_sample_bernoulli_and_bivariate_gmm(mus_i, sigmas_i, corrs_i, coeffs_i, bernoullis_i, random_state=random_state)
-    #(mu, sigma, corr, coeff, binary, random_state, binary_threshold=0.5, epsilon=1E-5, use_map=False)
-    res1 = sample(mus_i[:, 0], mus_i[:, 1], sigmas_i[:, 0], sigmas_i[:, 1], corrs_i, coeffs_i, bernoullis_i)
-    res2 = numpy_sample_bernoulli_and_bivariate_gmm(mus_i, sigmas_i, corrs_i, coeffs_i, bernoullis_i, random_state=random_state)
+    att_k_i = att_k_np[:, choose]
+    att_w_i = att_w_np[:, choose]
 
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
     f, axarr = plt.subplots(2, 1)
-    #strokes = trace_mb[:, choose]
-    #res1 = res1[:cut_len]
-    #res2 = res2[:cut_len]
+
+    res1 = sample(mus_i[:, 0], mus_i[:, 1], sigmas_i[:, 0], sigmas_i[:, 1], corrs_i, coeffs_i, bernoullis_i)
+    res1 = res1[:cut_len]
+    att_k_i = att_k_i[:cut_len]
+    att_w_i = att_w_i[:cut_len]
 
     strokes = res1
     strokes[:, 1:] = np.cumsum(strokes[:, 1:], axis=0)
@@ -226,9 +409,17 @@ with tf.Session() as sess:
     split = split_strokes(strokes)
     for sp in split:
         axarr[0].plot(sp[:, 0], sp[:, 1])
+    axarr[1].imshow(att_w_i.T)
+    #axarr[1].plot(att_k_i.mean(axis=-1))
     plt.savefig("plot_results1.png")
     plt.clf()
     plt.close()
+
+    res2 = numpy_sample_bernoulli_and_bivariate_gmm(mus_i, sigmas_i, corrs_i, coeffs_i, bernoullis_i,
+            random_state=random_state)
+    res2 = res2[:cut_len]
+    att_k_i = att_k_i[:cut_len]
+    att_w_i = att_w_i[:cut_len]
 
     f, axarr = plt.subplots(2, 1)
     strokes = res2
@@ -238,6 +429,9 @@ with tf.Session() as sess:
     split = split_strokes(strokes)
     for sp in split:
         axarr[0].plot(sp[:, 0], sp[:, 1])
+    axarr[1].imshow(att_w_i.T)
+    #axarr[1].plot(att_k_i.mean(axis=-1))
     plt.savefig("plot_results2.png")
     from IPython import embed; embed(); raise ValueError()
+"""
 

@@ -754,18 +754,18 @@ def GaussianAttention(list_of_step_inputs, list_of_step_input_dims,
     return h_t, k_t, w_t, ss_t
 
 
-def LogBernoulliAndCorrelatedLogGMM(
+def LogitBernoulliAndCorrelatedLogitGMM(
         list_of_inputs, list_of_input_dims, output_dim=2, name=None, n_components=5,
         weight_norm=None, random_state=None, strict=True,
         init=None):
     """
-    returns log_bernoulli, coeffs, mus, log_sigmas, corr
+    returns logit_bernoulli, logit_coeffs, mus, logit_sigmas, corr
     """
     assert n_components >= 1
     if name is None:
         name = _get_name()
     else:
-        name = name + "_log_bernoulli_and_correlated_log_gaussian_mixture"
+        name = name + "_logit_bernoulli_and_correlated_logit_gaussian_mixture"
 
 
     def _reshape(l, d=n_components):
@@ -794,14 +794,15 @@ def LogBernoulliAndCorrelatedLogGMM(
     mus = _reshape(mus)
     mus = tf.identity(mus, name=name + "_mus")
 
-    log_sigmas = Linear(
+    logit_sigmas = Linear(
         list_of_inputs=list_of_inputs, list_of_input_dims=list_of_input_dims,
-        output_dim=n_components * output_dim, name=name + "_log_sigmas_pre",
+        output_dim=n_components * output_dim, name=name + "_logit_sigmas_pre",
         weight_norm=weight_norm, random_state=random_state,
         strict=strict, init=init)
-    log_sigmas = _reshape(log_sigmas)
-    log_sigmas = tf.identity(log_sigmas, name=name + "_log_sigmas")
+    logit_sigmas = _reshape(logit_sigmas)
+    logit_sigmas = tf.identity(logit_sigmas, name=name + "_logit_sigmas")
 
+    """
     coeffs = Linear(
         list_of_inputs=list_of_inputs, list_of_input_dims=list_of_input_dims,
         output_dim=n_components, name=name + "_coeffs_pre",
@@ -810,6 +811,14 @@ def LogBernoulliAndCorrelatedLogGMM(
     coeffs = tf.nn.softmax(coeffs)
     coeffs = _reshape(coeffs, 1)
     coeffs = tf.identity(coeffs, name=name + "_coeffs")
+    """
+    logit_coeffs = Linear(
+        list_of_inputs=list_of_inputs, list_of_input_dims=list_of_input_dims,
+        output_dim=n_components, name=name + "_logit_coeffs_pre",
+        weight_norm=weight_norm, random_state=random_state,
+        strict=strict, init=init)
+    logit_coeffs = _reshape(logit_coeffs, 1)
+    logit_coeffs = tf.identity(logit_coeffs, name=name + "_logit_coeffs")
 
     calc_corr = int(factorial(output_dim ** 2 // 2 - 1))
     corrs = Linear(
@@ -821,13 +830,13 @@ def LogBernoulliAndCorrelatedLogGMM(
     corrs = _reshape(corrs, calc_corr)
     corrs = tf.identity(corrs, name + "_corrs")
 
-    log_bernoullis = Linear(
+    logit_bernoullis = Linear(
         list_of_inputs=list_of_inputs, list_of_input_dims=list_of_input_dims,
-        output_dim=1, name=name + "_log_bernoullis_pre",
+        output_dim=1, name=name + "_logit_bernoullis_pre",
         weight_norm=weight_norm, random_state=random_state,
         strict=strict, init=init)
-    log_bernoullis = tf.identity(log_bernoullis, name + "_log_bernoullis")
-    return log_bernoullis, coeffs, mus, log_sigmas, corrs
+    logit_bernoullis = tf.identity(logit_bernoullis, name + "_logit_bernoullis")
+    return logit_bernoullis, logit_coeffs, mus, logit_sigmas, corrs
 
 
 def BernoulliAndCorrelatedGMM(
@@ -917,26 +926,26 @@ def _logsumexp(inputs, axis=-1):
     return z
 
 
-def LogBernoulliAndCorrelatedLogGMMCost(
-    log_bernoulli_values, coeff_values, mu_values, log_sigma_values, corr_values,
+def LogitBernoulliAndCorrelatedLogitGMMCost(
+    logit_bernoulli_values, logit_coeff_values, mu_values, logit_sigma_values, corr_values,
     true_values, name=None):
     """
-    Log bernoulli combined with correlated gaussian mixture model negative log
+    Logit bernoulli combined with correlated gaussian mixture model negative log
     likelihood compared to true_values.
 
-    This is typically paired with LogBernoulliAndCorrelatedLogGMM
+    This is typically paired with LogitBernoulliAndCorrelatedLogitGMM
 
     Based on implementation from Junyoung Chung.
 
     Parameters
     ----------
-    log_bernoulli_values : tensor, shape
+    logit_bernoulli_values : tensor, shape
         The predicted values out of some layer, normallu a linear layer
-    coeff_values : tensor, shape
-        The predicted values out of some layer, normally a softmax layer
+    logit_coeff_values : tensor, shape
+        The predicted values out of some layer, normally a linear layer
     mu_values : tensor, shape
         The predicted values out of some layer, normally a linear layer
-    log_sigma_values : tensor, shape
+    logit_sigma_values : tensor, shape
         The predicted values out of some layer, normally a linear layer
     true_values : tensor, shape[:-1]
         Ground truth values. Must be the same shape as mu_values.shape[:-1].
@@ -974,40 +983,41 @@ def LogBernoulliAndCorrelatedLogGMMCost(
     mu_1 = _subslice(mu_values, 0)
     mu_2 = _subslice(mu_values, 1)
 
-    log_sigma_1 = _subslice(log_sigma_values, 0)
-    log_sigma_2 = _subslice(log_sigma_values, 1)
+    logit_sigma_1 = _subslice(logit_sigma_values, 0)
+    logit_sigma_2 = _subslice(logit_sigma_values, 1)
 
     true_0 = true_values[..., 0]
     true_1 = true_values[..., 1]
     true_2 = true_values[..., 2]
 
     # thanks to DWF
-    a, t = log_bernoulli_values, true_0
+    a, t = logit_bernoulli_values, true_0
     c_b = -1. * tf.reduce_sum(t * tf.nn.softplus(-a) + (1. - t) * tf.nn.softplus(a), axis=len(shape(t)) - 1)
     c_b = tf.identity(c_b, name=name + "_binary_nll")
 
     corr_values = _subslice(corr_values, 0)
-    coeff_values = _subslice(coeff_values, 0)
+    logit_coeff_values = _subslice(logit_coeff_values, 0)
+
 
     buff = 1 - corr_values ** 2 + 1E-8
     inner1 = (0.5 * tf.log(buff) +
-              log_sigma_1 + log_sigma_2 + tf.log(2 * np.pi))
+              logit_sigma_1 + logit_sigma_2 + tf.log(2 * np.pi))
 
-    z1 = ((true_1 - mu_1) ** 2) / tf.exp(2 * log_sigma_1)
-    z2 = ((true_2 - mu_2) ** 2) / tf.exp(2 * log_sigma_2)
+    z1 = ((true_1 - mu_1) ** 2) / tf.exp(2 * logit_sigma_1)
+    z2 = ((true_2 - mu_2) ** 2) / tf.exp(2 * logit_sigma_2)
     zr = (2 * corr_values * (true_1 - mu_1) * (true_2 - mu_2)) / (
-        tf.exp(log_sigma_1 + log_sigma_2))
+        tf.exp(logit_sigma_1 + logit_sigma_2))
     z = z1 + z2 - zr
 
     inner2 = .5 * (1. / buff)
     cost = -(inner1 + z * inner2)
     cost = tf.identity(cost, name=name + "_gaussian_nll")
 
-    coeff_log = tf.log(coeff_values)
-    coeff_log = tf.identity(coeff_log, name=name + "_coeff_entropy")
+    log_sm = tf.nn.log_softmax(logit_coeff_values, dim=-1)
+    log_sm = tf.identity(log_sm, name=name + "_coeff_entropy")
 
-    nll = -_logsumexp(cost + coeff_log,
-                      axis=len(shape(coeff_values)) - 1) - c_b
+    nll = -_logsumexp(cost + log_sm,
+                      axis=len(shape(logit_coeff_values)) - 1) - c_b
     nll = tf.identity(nll, name=name + "_full_nll")
     return nll
 
