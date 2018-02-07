@@ -633,9 +633,9 @@ def GaussianAttention(list_of_step_inputs, list_of_step_input_dims,
                       previous_attention_weight,
                       full_conditioning_tensor,
                       previous_attention_weight_dim,
-                      next_proj_dim,
+                      internal_proj_dim,
                       att_dim=10,
-                      average_step=1.,
+                      attention_scale=1.,
                       min_step=0.,
                       max_step=None,
                       cell_type="gru",
@@ -656,6 +656,9 @@ def GaussianAttention(list_of_step_inputs, list_of_step_input_dims,
     if init == "default":
         forward_init = None
         hidden_init = "ortho"
+    elif init == "ortho":
+        forward_init = None
+        hidden_init = "ortho"
     elif init == "normal":
         forward_init = "normal"
         hidden_init = "normal"
@@ -669,6 +672,7 @@ def GaussianAttention(list_of_step_inputs, list_of_step_input_dims,
     if check:
         raise ValueError("Unable to support step_input with n_dims != 2")
 
+    next_proj_dim = internal_proj_dim
     if cell_type == "gru":
         # INIT FUNC
         fork_inp, fork_inp_gate = GRUFork(list_of_step_inputs + [previous_attention_weight],
@@ -718,7 +722,7 @@ def GaussianAttention(list_of_step_inputs, list_of_step_input_dims,
     b_t = tf.exp(b_t)
     a_t = tf.identity(a_t, name=name + "_a_scale")
     b_t = tf.identity(b_t, name=name + "_b_scale")
-    step_size = average_step * tf.exp(k_t)
+    step_size = attention_scale * tf.exp(k_t)
     """
     if max_step is None:
         max_step = tensor.cast(ctx.shape[0], "float32")
@@ -982,19 +986,40 @@ def LogitBernoulliAndCorrelatedLogitGMMCost(
 
     mu_1 = _subslice(mu_values, 0)
     mu_2 = _subslice(mu_values, 1)
+    corr_values = _subslice(corr_values, 0)
 
+    sigma_values = tf.exp(logit_sigma_values) + 1E-6
+    sigma_1 = _subslice(sigma_values, 0)
+    sigma_2 = _subslice(sigma_values, 1)
+
+    bernoulli_values = tf.nn.sigmoid(logit_bernoulli_values)
+    logit_coeff_values = _subslice(logit_coeff_values, 0)
+    coeff_values = tf.nn.softmax(logit_coeff_values)
+
+    """
     logit_sigma_1 = _subslice(logit_sigma_values, 0)
     logit_sigma_2 = _subslice(logit_sigma_values, 1)
+    logit_coeff_values = _subslice(logit_coeff_values, 0)
+    """
 
     true_0 = true_values[..., 0]
     true_1 = true_values[..., 1]
     true_2 = true_values[..., 2]
 
+    # don't be clever
+    buff = (1. - tf.square(corr_values)) + 1E-6
+    x_term = (true_1 - mu_1) / sigma_1
+    y_term = (true_2 - mu_2) / sigma_2
+
+    Z = tf.square(x_term) + tf.square(y_term) - 2. * corr_values * x_term * y_term
+    N = 1. / (2. * np.pi * sigma_1 * sigma_2 * tf.sqrt(buff)) * tf.exp(-Z / (2. * buff))
+    ep = tf.reduce_sum(true_0 * bernoulli_values + (1. - true_0) * (1. - bernoulli_values), axis=-1)
+    rp = tf.reduce_sum(coeff_values * N, axis=-1)
+    nll = -tf.log(rp + 1E-8) - tf.log(ep + 1E-8)
+
+    """
     ll_b = -tf.reduce_sum(tf.nn.sigmoid_cross_entropy_with_logits(labels=true_0, logits=logit_bernoulli_values), axis=-1)
     ll_b = tf.identity(ll_b, name=name + "_binary_ll")
-
-    corr_values = _subslice(corr_values, 0)
-    logit_coeff_values = _subslice(logit_coeff_values, 0)
 
     buff = 1 - corr_values ** 2 + 1E-8
     inner1 = (0.5 * tf.log(buff) +
@@ -1022,6 +1047,7 @@ def LogitBernoulliAndCorrelatedLogitGMMCost(
 
     nll = nllp1 + nllp2
     nll = tf.identity(nll, name=name + "_full_nll")
+    """
     return nll
 
 

@@ -164,12 +164,10 @@ with tf.Session() as sess:
     y_pen_mask = graph.get_tensor_by_name("y_pen_mask:0")
     init_h1 = graph.get_tensor_by_name("init_h1:0")
     init_h2 = graph.get_tensor_by_name("init_h2:0")
-    init_h3 = graph.get_tensor_by_name("init_h3:0")
     init_att_h = graph.get_tensor_by_name("init_att_h:0")
     init_att_k = graph.get_tensor_by_name("init_att_k:0")
     init_att_w = graph.get_tensor_by_name("init_att_w:0")
 
-    bias = graph.get_tensor_by_name("bias:0")
     logit_bernoullis = graph.get_tensor_by_name("b_gmm_logit_bernoulli_and_correlated_logit_gaussian_mixture_logit_bernoullis:0")
     logit_coeffs = graph.get_tensor_by_name("b_gmm_logit_bernoulli_and_correlated_logit_gaussian_mixture_logit_coeffs:0")
     mus = graph.get_tensor_by_name("b_gmm_logit_bernoulli_and_correlated_logit_gaussian_mixture_mus:0")
@@ -181,9 +179,7 @@ with tf.Session() as sess:
     att_h = graph.get_tensor_by_name("att_h:0")
     h1_o = graph.get_tensor_by_name("h1_o:0")
     h2_o = graph.get_tensor_by_name("h2_o:0")
-    h3_o = graph.get_tensor_by_name("h3_o:0")
 
-    prime = 50
     all_res = [tmb for tmb in trace_mb[:2]]
     all_res_mask = [0. * tm + 1. for tm in trace_mask[:2]]
     all_att_h = [init_att_h_np,]
@@ -191,8 +187,7 @@ with tf.Session() as sess:
     all_att_w = [init_att_w_np,]
     all_h1 = [init_h1_np,]
     all_h2 = [init_h2_np,]
-    all_h3 = [init_h3_np,]
-    sample_len = 200
+    sample_len = 2000
     monitor = 20
     for i in range(sample_len):
         if i == (sample_len - 1):
@@ -201,14 +196,13 @@ with tf.Session() as sess:
             print("Sampling step {}".format(i))
         #this_trace_mb = np.array(all_res[-prime:])
         #this_trace_mask = np.array(all_res_mask[-prime:])
-        this_trace_mb = np.array(all_res[-prime:])
-        this_trace_mask = np.array(all_res_mask[-prime:])
+        this_trace_mb = np.array(all_res[-2:])
+        this_trace_mask = np.array(all_res_mask[-2:])
         this_init_att_h = np.array(all_att_h[-1])
         this_init_att_k = np.array(all_att_k[-1])
         this_init_att_w = np.array(all_att_w[-1])
         this_init_h1 = np.array(all_h1[-1])
         this_init_h2 = np.array(all_h2[-1])
-        this_init_h3 = np.array(all_h3[-1])
 
         feed = {X_char: text_mb,
                 X_char_mask: text_mask,
@@ -216,14 +210,13 @@ with tf.Session() as sess:
                 y_pen_mask: this_trace_mask,
                 init_h1: init_h1_np,
                 init_h2: init_h2_np,
-                init_h3: init_h3_np,
                 init_att_h: init_att_h_np,
                 init_att_k: init_att_k_np,
                 init_att_w: init_att_w_np}
 
         desired_outs = [logit_bernoullis, logit_coeffs, mus, logit_sigmas, corrs,
                         att_h, att_k, att_w,
-                        h1_o, h2_o, h3_o]
+                        h1_o, h2_o]
         r_outs = sess.run(desired_outs, feed)
 
         logit_bernoullis_np = r_outs[0]
@@ -236,15 +229,13 @@ with tf.Session() as sess:
         att_w_np = r_outs[7]
         h1_np = r_outs[8]
         h2_np = r_outs[9]
-        h3_np = r_outs[10]
 
-        bias = 10.
+        bias = 1.
         sigmas_np = np.exp(logit_sigmas_np - bias)
         coeffs_np = softmax(logit_coeffs_np)
         #coeffs_np = softmax(logit_coeffs_np * (1. + bias))
         bernoullis_np = sigmoid(logit_bernoullis_np)
 
-        # any of the 50, really
         this_res = []
         for choose in range(h1_np.shape[1]):
             mus_i = mus_np[:, choose]
@@ -270,21 +261,17 @@ with tf.Session() as sess:
         all_att_w.append(att_w_np[0])# = [init_att_k_np,]
         all_h1.append(h1_np[0])
         all_h2.append(h2_np[0])
-        all_h3.append(h3_np[0])
 
         #all_att_w = [init_att_w_np,]
         #all_h1 = [init_h1_np,]
         #all_h2 = [init_h2_np,]
         #all_h3 = [init_h3_np,]
 
-        """
-        init_h1_np[-1] = h1_np[-1]
-        init_h2_np[-1] = h2_np[-1]
-        init_h3_np[-1] = h3_np[-1]
-        init_att_h_np[-1] = att_h_np[-1]
-        init_att_k_np[-1] = att_k_np[-1]
-        init_att_w_np[-1] = att_w_np[-1]
-        """
+        init_h1_np = h1_np[-1]
+        init_h2_np = h2_np[-1]
+        init_att_h_np = att_h_np[-1]
+        init_att_k_np = att_k_np[-1]
+        init_att_w_np = att_w_np[-1]
 
     import matplotlib
     matplotlib.use("Agg")
