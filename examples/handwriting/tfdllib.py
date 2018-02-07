@@ -729,7 +729,7 @@ def GaussianAttention(list_of_step_inputs, list_of_step_input_dims,
     k_t = k_tm1 + step_size
     k_t = tf.identity(k_t, name=name + "_position")
     # Don't let the gaussian go off the end
-    #k_t = k_t.clip(np.cast["float32"](0.), tensor.cast(ctx.shape[0], "float32"))
+    #k_t = k_t.clip(np.cast["float32"](0.), 1.2 * tensor.cast(ctx.shape[0], "float32"))
 
     def calc_phi(lk_t, la_t, lb_t, lu):
         la_t = tf.expand_dims(la_t, axis=2)
@@ -990,14 +990,11 @@ def LogitBernoulliAndCorrelatedLogitGMMCost(
     true_1 = true_values[..., 1]
     true_2 = true_values[..., 2]
 
-    # thanks to DWF
-    a, t = logit_bernoulli_values, true_0
-    c_b = -1. * tf.reduce_sum(t * tf.nn.softplus(-a) + (1. - t) * tf.nn.softplus(a), axis=len(shape(t)) - 1)
-    c_b = tf.identity(c_b, name=name + "_binary_nll")
+    ll_b = -tf.reduce_sum(tf.nn.sigmoid_cross_entropy_with_logits(labels=true_0, logits=logit_bernoulli_values), axis=-1)
+    ll_b = tf.identity(ll_b, name=name + "_binary_ll")
 
     corr_values = _subslice(corr_values, 0)
     logit_coeff_values = _subslice(logit_coeff_values, 0)
-
 
     buff = 1 - corr_values ** 2 + 1E-8
     inner1 = (0.5 * tf.log(buff) +
@@ -1010,14 +1007,20 @@ def LogitBernoulliAndCorrelatedLogitGMMCost(
     z = z1 + z2 - zr
 
     inner2 = .5 * (1. / buff)
-    cost = -(inner1 + z * inner2)
-    cost = tf.identity(cost, name=name + "_gaussian_nll")
+    ll_g = -(inner1 + z * inner2)
+    ll_g = tf.identity(ll_g, name=name + "_gaussian_ll")
 
-    log_sm = tf.nn.log_softmax(logit_coeff_values, dim=-1)
-    log_sm = tf.identity(log_sm, name=name + "_coeff_entropy")
+    ll_sm = tf.nn.log_softmax(logit_coeff_values, dim=-1)
+    ll_sm = tf.identity(ll_sm, name=name + "_coeff_ll")
 
-    nll = -_logsumexp(cost + log_sm,
-                      axis=len(shape(logit_coeff_values)) - 1) - c_b
+    nllp1 = -_logsumexp(ll_g + ll_sm,
+                        axis=len(shape(logit_coeff_values)) - 1)
+    nllp1 = tf.identity(nllp1, name=name + "_gmm_nll")
+
+    nllp2 = - ll_b
+    nllp2 = tf.identity(nllp2, name=name + "_b_nll")
+
+    nll = nllp1 + nllp2
     nll = tf.identity(nll, name=name + "_full_nll")
     return nll
 

@@ -37,17 +37,18 @@ target = iamondb["target"]
 X = [xx.astype("float32") for xx in data]
 y = [yy.astype("float32") for yy in target]
 
-train_itr = list_iterator([X, y], minibatch_size=50, axis=1,
+train_itr = list_iterator([X, y], minibatch_size=32, axis=1,
                           stop_index=10000,
                           make_mask=True)
 trace_mb, trace_mask, text_mb, text_mask = next(train_itr)
 train_itr.reset()
 n_letters = len(iamondb["vocabulary"])
 random_state = np.random.RandomState(1999)
-n_attention = 10
-n_mdn = 20
-h_dim = 400
-cut_len = 300
+n_attention = 1
+n_mdn = 8
+h_dim = 100
+cut_len = 150
+average_step = 1. / 25.
 n_batch = trace_mb.shape[1]
 
 X_char = tf.placeholder(tf.float32, shape=[None, n_batch, n_letters],
@@ -62,27 +63,24 @@ init_h1 = tf.placeholder(tf.float32, [n_batch, h_dim],
                          name="init_h1")
 init_h2 = tf.placeholder(tf.float32, [n_batch, h_dim],
                          name="init_h2")
-init_h3 = tf.placeholder(tf.float32, [n_batch, h_dim],
-                         name="init_h3")
 init_att_h = tf.placeholder(tf.float32, [n_batch, h_dim],
                             name="init_att_h")
 init_att_k = tf.placeholder(tf.float32, [n_batch, n_attention],
                             name="init_att_k")
 init_att_w = tf.placeholder(tf.float32, [n_batch, n_letters],
                             name="init_att_w")
-bias = tf.placeholder_with_default(tf.zeros(shape=[]), shape=[],
-                                   name="bias")
 
 y_tm1 = y_pen[:-1, :, :]
 y_t = y_pen[1:, :, :]
 y_mask_tm1 = y_pen_mask[:-1]
+y_mask_t = y_pen_mask[1:]
 
 rnn_init = "normal"
 forward_init = "normal"
 use_weight_norm = False
 norm_clip = True
 if norm_clip:
-    grad_clip = 10.
+    grad_clip = 3.
 else:
     grad_clip = 100.
 
@@ -90,7 +88,7 @@ proj_inp = Linear([y_tm1], [3], h_dim, random_state=random_state,
                   weight_norm=use_weight_norm, init=forward_init,
                   name="proj")
 
-def step(inp_t, inp_mask_t, h1_tm1, h2_tm1, h3_tm1, att_h_tm1, att_k_tm1, att_w_tm1):
+def step(inp_t, inp_mask_t, h1_tm1, h2_tm1, att_h_tm1, att_k_tm1, att_w_tm1):
     r = GaussianAttention([inp_t], [h_dim],
                           att_h_tm1,
                           att_k_tm1,
@@ -98,6 +96,8 @@ def step(inp_t, inp_mask_t, h1_tm1, h2_tm1, h3_tm1, att_h_tm1, att_k_tm1, att_w_
                           X_char,
                           n_letters,
                           h_dim,
+                          att_dim=n_attention,
+                          average_step=.25,
                           step_mask=inp_mask_t,
                           conditioning_mask=X_char_mask,
                           weight_norm=use_weight_norm,
@@ -128,35 +128,24 @@ def step(inp_t, inp_mask_t, h1_tm1, h2_tm1, h3_tm1, att_h_tm1, att_k_tm1, att_w_
                weight_norm=use_weight_norm,
                random_state=random_state, init=rnn_init, name="gru2")
 
-    fork3_t, fork3_gate_t = GRUFork([h2_t], [h_dim], h_dim,
-                                    weight_norm=use_weight_norm,
-                                    random_state=random_state,
-                                    name="gru3_fork",
-                                    init=forward_init)
-    h3_t = GRU(fork3_t, fork3_gate_t, h3_tm1, h_dim, h_dim,
-               mask=inp_mask_t,
-               weight_norm=use_weight_norm,
-               random_state=random_state, init=rnn_init, name="gru3")
-    return h1_t, h2_t, h3_t, att_h_t, att_k_t, att_w_t
+    return h1_t, h2_t, att_h_t, att_k_t, att_w_t
 
 o = scan(step,
         [proj_inp, y_mask_tm1],
-        [init_h1, init_h2, init_h3, init_att_h, init_att_k, init_att_w])
+        [init_h1, init_h2, init_att_h, init_att_k, init_att_w])
 h1_o = o[0]
 h2_o = o[1]
-h3_o = o[2]
-att_h = o[3]
-att_k = o[4]
-att_w = o[5]
+att_h = o[2]
+att_k = o[3]
+att_w = o[4]
 
 h1_o = tf.identity(h1_o, name="h1_o")
 h2_o = tf.identity(h2_o, name="h2_o")
-h3_o = tf.identity(h3_o, name="h3_o")
 att_h = tf.identity(att_h, name="att_h")
 att_k = tf.identity(att_k, name="att_k")
 att_w = tf.identity(att_w, name="att_w")
 
-p = LogitBernoulliAndCorrelatedLogitGMM([h3_o], [h_dim], name="b_gmm",
+p = LogitBernoulliAndCorrelatedLogitGMM([h2_o], [h_dim], name="b_gmm",
                                         n_components=n_mdn,
                                         weight_norm=use_weight_norm,
                                         random_state=random_state,
@@ -171,9 +160,9 @@ corrs = p[4]
 #    bernoullis, coeffs, mus, sigmas, corrs, y_t, name="cost")
 cost = LogitBernoulliAndCorrelatedLogitGMMCost(
     logit_bernoullis, logit_coeffs, mus, logit_sigmas, corrs, y_t, name="cost")
-loss = tf.reduce_mean(cost)
-#masked_cost = y_pen_mask * cost
-#loss = tf.reduce_sum(cost / (tf.reduce_sum(y_pen_mask) + 1.))
+#loss = tf.reduce_mean(cost)
+masked_cost = y_mask_t * cost
+loss = tf.reduce_sum(masked_cost / (tf.reduce_sum(y_mask_t) + 1E-6))
 
 params_dict = get_params_dict()
 params = params_dict.values()
@@ -231,7 +220,6 @@ def loop(itr, sess, extras):
     trace_mb, trace_mask, text_mb, text_mask = next(itr)
     init_h1_np = np.zeros((n_batch, h_dim)).astype("float32")
     init_h2_np = np.zeros((n_batch, h_dim)).astype("float32")
-    init_h3_np = np.zeros((n_batch, h_dim)).astype("float32")
     init_att_h_np = np.zeros((n_batch, h_dim)).astype("float32")
     init_att_k_np = np.zeros((n_batch, n_attention)).astype("float32")
     init_att_w_np = np.zeros((n_batch, n_letters)).astype("float32")
@@ -249,27 +237,24 @@ def loop(itr, sess, extras):
                 y_pen_mask: tbptt_trace_mask,
                 init_h1: init_h1_np,
                 init_h2: init_h2_np,
-                init_h3: init_h3_np,
                 init_att_h: init_att_h_np,
                 init_att_k: init_att_k_np,
                 init_att_w: init_att_w_np}
 
         if extras["train"]:
-            outs = [loss, summary, updates, h1_o, h2_o, h3_o, att_h, att_k, att_w]
+            outs = [loss, summary, updates, h1_o, h2_o, att_h, att_k, att_w]
             p = sess.run(outs, feed)
             train_loss = p[0]
             train_summary = p[1]
             _ = p[2]
             h1_np = p[3]
             h2_np = p[4]
-            h3_np = p[5]
-            att_h_np = p[6]
-            att_k_np = p[7]
-            att_w_np = p[8]
+            att_h_np = p[5]
+            att_k_np = p[6]
+            att_w_np = p[7]
 
             init_h1_np = h1_np[-1]
             init_h2_np = h2_np[-1]
-            init_h3_np = h3_np[-1]
             init_att_h_np = att_h_np[-1]
             init_att_k_np = att_k_np[-1]
             init_att_w_np = att_w_np[-1]
