@@ -39,7 +39,7 @@ y = [yy.astype("float32") for yy in target]
 
 n_letters = len(iamondb["vocabulary"])
 random_state = np.random.RandomState(1999)
-n_epochs = 30
+n_epochs = 40
 n_attention = 10
 n_mdn = 20
 # ~1600 units per RNN
@@ -79,7 +79,7 @@ y_t = y_pen[1:, :, :]
 y_mask_tm1 = y_pen_mask[:-1]
 y_mask_t = y_pen_mask[1:]
 
-rnn_init = "ortho"
+rnn_init = "truncated_normal"
 forward_init = "truncated_normal"
 use_weight_norm = False
 norm_clip = True
@@ -249,6 +249,7 @@ def loop(itr, sess, extras):
     init_att_w_np = np.zeros((n_batch, n_letters)).astype("float32")
 
     tbptt_batches = make_tbptt_batches([trace_mb, trace_mask], cut_len)
+
     overall_train_loss = 0.
     overall_train_len = 0.
     train_summaries = []
@@ -279,12 +280,12 @@ def loop(itr, sess, extras):
             att_k_np = p[7]
             att_w_np = p[8]
 
-            init_h1_np = h1_np[-1]
-            init_h2_np = h2_np[-1]
-            init_h3_np = h3_np[-1]
-            init_att_h_np = att_h_np[-1]
-            init_att_k_np = att_k_np[-1]
-            init_att_w_np = att_w_np[-1]
+            init_h1_np[:] = h1_np[-1]
+            init_h2_np[:] = h2_np[-1]
+            init_h3_np[:] = h3_np[-1]
+            init_att_h_np[:] = att_h_np[-1]
+            init_att_k_np[:] = att_k_np[-1]
+            init_att_w_np[:] = att_w_np[-1]
             # undo the mean, so we get the correct aggregate
             overall_train_loss += len(att_k_np) * train_loss
             overall_train_len += len(att_k_np)

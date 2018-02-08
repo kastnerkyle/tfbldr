@@ -15,9 +15,14 @@ import pickle
 import numpy as np
 import fnmatch
 from scipy import linalg
+import numpy as np
 from functools import wraps
 import exceptions
 import subprocess
+
+import pickle
+import xml.etree.cElementTree as ElementTree
+import HTMLParser
 
 
 def pwrap(args, shell=False):
@@ -244,304 +249,145 @@ def rsync_fetch(fetch_func, machine_to_fetch_from, *args, **kwargs):
     return r
 
 
-def extract_points(file_like):
-    # file_like has .read() attr
-    # from https://gist.github.com/lirnli/fc7cf6235ef1a0343321af6f1be01702
-    soup = Soup(file_like, 'lxml')
-    pts = [[float(pt['x']), float(pt['y'])] for pt in soup.find_all('point')]
-    pen_lifts = []
-    for stroke in soup.find_all('stroke'):
-        pen_lifts += [0] * (len(stroke.find_all('point')) - 1) + [1]
-    return pts, pen_lifts
+def distance(p1, p2, axis=None):
+    return np.sqrt(np.sum(np.square(p1 - p2), axis=axis))
+
+
+def clear_middle(pts):
+    to_remove = set()
+    for i in range(1, len(pts) - 1):
+        p1, p2, p3 = pts[i - 1: i + 2, :2]
+        dist = distance(p1, p2) + distance(p2, p3)
+        if dist > 1500:
+            to_remove.add(i)
+    npts = []
+    for i in range(len(pts)):
+        if i not in to_remove:
+            npts += [pts[i]]
+    return np.array(npts)
+
+
+def separate(pts):
+    seps = []
+    for i in range(0, len(pts) - 1):
+        if distance(pts[i], pts[i+1]) > 600:
+            seps += [i + 1]
+    return [pts[b:e] for b, e in zip([0] + seps, seps + [len(pts)])]
 
 
 def fetch_iamondb():
-    from lxml import etree
     partial_path = check_fetch_iamondb()
-    pickle_path = os.path.join(partial_path, "iamondb_saved.pkl")
+    pickle_path = os.path.join(partial_path, "iamondb_preproc_v2.pkl")
     if not os.path.exists(pickle_path):
-        input_file = os.path.join(partial_path, 'lineStrokes-all.tar.gz')
+        data = []
+        charset = set()
+        file_no = 0
+        input_file = os.path.join(partial_path, "original-xml-part.tar.gz")
         raw_data = tarfile.open(input_file)
-        transcript_files = []
-        strokes = []
-        idx = 0
-        for member in raw_data.getmembers():
-            if member.isreg():
-                transcript_files.append(member.name)
-                content = raw_data.extractfile(member)
-                tree = etree.parse(content)
-                root = tree.getroot()
-                content.close()
-                points = []
-                for StrokeSet in root:
-                    for i, Stroke in enumerate(StrokeSet):
-                        for Point in Stroke:
-                            points.append([i,
-                                int(Point.attrib['x']),
-                                int(Point.attrib['y'])])
-                points = np.array(points)
-                points[:, 2] = -points[:, 2]
-                change_stroke = points[:-1, 0] != points[1:, 0]
-                pen_up = points[:, 0] * 0
-                pen_up[:-1][change_stroke] = 1
-                pen_up[-1] = 1
-                points[:, 0] = pen_up
-                strokes.append(points)
-                idx += 1
+        for f in raw_data.getmembers():
+            fname = f.name
+            file_name, extension = os.path.splitext(fname)
+            if extension == ".xml":
+                file_no += 1
+                print('[{:5d}] File {} -- '.format(file_no, fname), end='')
+                tarxml = raw_data.extractfile(f)
+                xml = ElementTree.parse(tarxml).getroot()
+                transcription = xml.findall('Transcription')
+                if not transcription:
+                    print('skipped')
+                    continue
+                texts = [HTMLParser.HTMLParser().unescape(s.get('text')) for s in transcription[0].findall('TextLine')]
+                points = [s.findall('Point') for s in xml.findall('StrokeSet')[0].findall('Stroke')]
+                strokes = []
+                mid_points = []
+                for ps in points:
+                    pts = np.array([[int(p.get('x')), int(p.get('y')), 0] for p in ps])
+                    pts[-1, 2] = 1
 
-        strokes_bp = strokes
+                    pts = clear_middle(pts)
+                    if len(pts) == 0:
+                        continue
 
-        clip = 500
-        strokes = [x[1:] - x[:-1] for x in strokes]
-        strokes = [np.vstack([[0, 0, 0], x]) for x in strokes]
-        strokes = [np.minimum(np.maximum(x, -clip), clip) for x in strokes]
+                    seps = separate(pts)
+                    for pss in seps:
+                        if len(seps) > 1 and len(pss) == 1:
+                            continue
+                        pss[-1, 2] = 1
 
-        for i, stroke in enumerate(strokes):
-            strokes[i][:, 0] = strokes_bp[i][:, 0]
+                        xmax, ymax = max(pss, key=lambda x: x[0])[0], max(pss, key=lambda x: x[1])[1]
+                        xmin, ymin = min(pss, key=lambda x: x[0])[0], min(pss, key=lambda x: x[1])[1]
 
-        # Computing mean and variance seems to not be necessary.
-        # Training is going slower than just scaling.
+                        strokes += [pss]
+                        mid_points += [[(xmax + xmin) / 2., (ymax + ymin) / 2.]]
+                distances = [-(abs(p1[0] - p2[0]) + abs(p1[1] - p2[1]))
+                             for p1, p2 in zip(mid_points, mid_points[1:])]
+                splits = sorted(np.argsort(distances)[:len(texts) - 1] + 1)
+                lines = []
+                for b, e in zip([0] + splits, splits + [len(strokes)]):
+                    lines += [[p for pts in strokes[b:e] for p in pts]]
+                print('lines = {:4d}; texts = {:4d}'.format(len(lines), len(texts)))
+                charset |= set(''.join(texts))
+                data += [(texts, lines)]
+        print('data = {}; charset = ({}) {}'.format(len(data), len(charset), ''.join(sorted(charset))))
 
-        data_mean = np.array([0., 0., 0.])
-        data_std = np.array([1., 20., 20.])
+        translation = {'<NULL>': 0}
+        for c in ''.join(sorted(charset)):
+            translation[c] = len(translation)
 
-        strokes = [(x - data_mean) / data_std for x in strokes]
+        def translate(txt):
+            return list(map(lambda x: translation[x], txt))
 
-        transcript_files = [x.split(os.sep)[-1]
-                            for x in transcript_files]
-        transcript_files = [re.sub('-[0-9][0-9].xml', '.txt', x)
-                            for x in transcript_files]
+        dataset = []
+        labels = []
+        for texts, lines in data:
+            for text, line in zip(texts, lines):
+                line = np.array(line, dtype=np.float32)
+                line[:, 0] = line[:, 0] - np.min(line[:, 0])
+                line[:, 1] = line[:, 1] - np.mean(line[:, 1])
 
-        counter = Counter(transcript_files)
+                dataset += [line]
+                labels += [translate(text)]
 
-        input_file = os.path.join(partial_path, 'ascii-all.tar.gz')
+        whole_data = np.concatenate(dataset, axis=0)
+        std_y = np.std(whole_data[:, 1])
+        norm_data = []
+        for line in dataset:
+            line[:, :2] /= std_y
+            norm_data += [line]
+        dataset = norm_data
 
-        raw_data = tarfile.open(input_file)
-        member = raw_data.getmembers()[10]
-
-        all_transcripts = []
-        for member in raw_data.getmembers():
-            if member.isreg() and member.name.split("/")[-1] in transcript_files:
-                fp = raw_data.extractfile(member)
-
-                cleaned = [t.strip() for t in fp.readlines()
-                        if t != '\r\n'
-                        and t != '\n'
-                        and t != '\r\n'
-                        and t.strip() != '']
-
-                # Try using CSR
-                idx = [n for n, li in enumerate(cleaned) if li == "CSR:"][0]
-                cleaned_sub = cleaned[idx + 1:]
-                corrected_sub = []
-                for li in cleaned_sub:
-                    # Handle edge case with %%%%% meaning new line?
-                    if "%" in li:
-                        li2 = re.sub('\%\%+', '%', li).split("%")
-                        li2 = [l.strip() for l in li2]
-                        corrected_sub.extend(li2)
-                    else:
-                        corrected_sub.append(li)
-
-                if counter[member.name.split("/")[-1]] != len(corrected_sub):
-                    pass
-
-                all_transcripts.extend(corrected_sub)
-
-        # Last file transcripts are almost garbage
-        all_transcripts[-1] = 'A move to stop'
-        all_transcripts.append('garbage')
-        all_transcripts.append('A move to stop')
-        all_transcripts.append('garbage')
-        all_transcripts.append('A move to stop')
-        all_transcripts.append('A move to stop')
-        all_transcripts.append('Marcus Luvki')
-        all_transcripts.append('Hallo Well')
-        # Remove outliers and big / small sequences
-        # Makes a BIG difference.
-        filter_ = [len(x) <= 1200 and len(x) >= 300 and
-                   x.max() <= 100 and x.min() >= -50 for x in strokes]
-
-        strokes = [x for x, cond in zip(strokes, filter_) if cond]
-        all_transcripts = [x for x, cond in
-                           zip(all_transcripts, filter_) if cond]
-
-        num_examples = len(strokes)
-
-        # Shuffle for train/validation/test division
-        rng = np.random.RandomState(1999)
-        shuffle_idx = rng.permutation(num_examples)
-
-        strokes = [strokes[x] for x in shuffle_idx]
-        all_transcripts = [all_transcripts[x] for x in shuffle_idx]
-
-        all_chars = ([chr(ord('a') + i) for i in range(26)] +
-                     [chr(ord('A') + i) for i in range(26)] +
-                     [chr(ord('0') + i) for i in range(10)] +
-                     [',', '.', '!', '?', ';', ' ', ':'] +
-                     ["#", '&', '+', '[', ']', '{', '}'] +
-                     ["/", "*"] +
-                     ['(', ')', '"', "'", '-', '<UNK>'])
-
-        code2char = dict(enumerate(all_chars))
-        char2code = {v: k for k, v in code2char.items()}
-        vocabulary_size = len(char2code.keys())
-        unk_char = '<UNK>'
-
-        y = []
-        for n, li in enumerate(all_transcripts):
-            y.append(tokenize_ind(li, char2code))
+        print('datset = {}; labels = {}'.format(len(dataset), len(labels)))
 
         pickle_dict = {}
-        pickle_dict["target_phrases"] = all_transcripts
-        pickle_dict["vocabulary_size"] = vocabulary_size
-        pickle_dict["vocabulary_tokenizer"] = tokenize_ind
-        pickle_dict["vocabulary"] = char2code
-        pickle_dict["data"] = strokes
-        # check the it is correct order
-        #plot_lines_iamondb_example(strokes[0], title="", save_name="tru")
-        pickle_dict["target"] = y
+        pickle_dict["dataset"] = dataset
+        pickle_dict["labels"] = labels
+        pickle_dict["translation"] = translation
         f = open(pickle_path, "wb")
         pickle.dump(pickle_dict, f, -1)
         f.close()
+
     with open(pickle_path, "rb") as f:
         pickle_dict = pickle.load(f)
-    return pickle_dict
 
-"""
-def fetch_iamondb():
-    from lxml import etree
-    partial_path = check_fetch_iamondb()
-    pickle_path = os.path.join(partial_path, "iamondb_saved.pkl")
-    if not os.path.exists(pickle_path):
-        print("Saved pickle file {} not found, creating...".format(pickle_path))
-        all_xml_files = []
-        for root, dirnames, filenames in os.walk(os.path.join(partial_path, "lineStrokes")):
-            for filename in fnmatch.filter(filenames, '*.xml'):
-                all_xml_files.append(os.path.join(root, filename))
-        input_file = os.path.join(partial_path, 'lineStrokes-all.tar.gz')
-        raw_data = tarfile.open(input_file)
-        transcript_files = []
-        strokes = []
-        idx = 0
-        factor = 20.
-        clip = 500
-        for member in raw_data.getmembers():
-            if member.isreg():
-                transcript_files.append(member.name)
-                content = raw_data.extractfile(member)
-                _pts, _pen_lifts = extract_points(content)
-                _pts, _pen_lifts = np.array(_pts), np.array(_pen_lifts)
-                _pts, _pen_lifts = _pts - np.roll(_pts, 1, axis=0), _pen_lifts
+    d = {}
+    lbls = pickle_dict["labels"]
+    ds = pickle_dict["dataset"]
+    tr = pickle_dict["translation"]
+    r_tr = {v: k for k, v in tr.items()}
+    all_target = []
+    all_target_phrases = []
+    for li in lbls:
+        do = dense_to_one_hot(np.array(li), len(tr))
+        all_target.append(do)
+        dp = "".join([r_tr[li[i]] for i in range(len(li))])
+        all_target_phrases.append(dp)
 
-                _pts[0][0] = 100
-                _pts[0][1] = 0
-                _pen_lifts[0] = 1
-                _pts = np.minimum(np.maximum(_pts, -clip), clip) / factor
-                points = np.concatenate((_pen_lifts[:, None], _pts), axis=-1)
-                strokes.append(points)
-                idx += 1
-
-        transcript_files = [x.split(os.sep)[-1]
-                            for x in transcript_files]
-        transcript_files = [re.sub('-[0-9][0-9].xml', '.txt', x)
-                            for x in transcript_files]
-
-        counter = Counter(transcript_files)
-
-        input_file = os.path.join(partial_path, 'ascii-all.tar.gz')
-
-        raw_data = tarfile.open(input_file)
-        member = raw_data.getmembers()[10]
-
-        all_transcripts = []
-        for member in raw_data.getmembers():
-            if member.isreg() and member.name.split("/")[-1] in transcript_files:
-                fp = raw_data.extractfile(member)
-
-                cleaned = [t.strip() for t in fp.readlines()
-                        if t != '\r\n'
-                        and t != '\n'
-                        and t != '\r\n'
-                        and t.strip() != '']
-
-                # Try using CSR
-                idx = [n for n, li in enumerate(cleaned) if li == "CSR:"][0]
-                cleaned_sub = cleaned[idx + 1:]
-                corrected_sub = []
-                for li in cleaned_sub:
-                    # Handle edge case with %%%%% meaning new line?
-                    if "%" in li:
-                        li2 = re.sub('\%\%+', '%', li).split("%")
-                        li2 = [l.strip() for l in li2]
-                        corrected_sub.extend(li2)
-                    else:
-                        corrected_sub.append(li)
-
-                if counter[member.name.split("/")[-1]] != len(corrected_sub):
-                    pass
-
-                all_transcripts.extend(corrected_sub)
-
-        # Last file transcripts are almost garbage
-        all_transcripts[-1] = 'A move to stop'
-        all_transcripts.append('garbage')
-        all_transcripts.append('A move to stop')
-        all_transcripts.append('garbage')
-        all_transcripts.append('A move to stop')
-        all_transcripts.append('A move to stop')
-        all_transcripts.append('Marcus Luvki')
-        all_transcripts.append('Hallo Well')
-        # Remove outliers and big / small sequences
-        # Makes a BIG difference.
-        filter_ = [len(x) <= 1200 and len(x) >= 300 and
-                   x.max() <= 100 and x.min() >= -50 for x in strokes]
-
-        strokes = [x for x, cond in zip(strokes, filter_) if cond]
-        all_transcripts = [x for x, cond in
-                           zip(all_transcripts, filter_) if cond]
-
-        num_examples = len(strokes)
-
-        # Shuffle for train/validation/test division
-        rng = np.random.RandomState(1999)
-        shuffle_idx = rng.permutation(num_examples)
-
-        strokes = [strokes[x] for x in shuffle_idx]
-        all_transcripts = [all_transcripts[x] for x in shuffle_idx]
-
-        all_chars = ([chr(ord('a') + i) for i in range(26)] +
-                     [chr(ord('A') + i) for i in range(26)] +
-                     [chr(ord('0') + i) for i in range(10)] +
-                     [',', '.', '!', '?', ';', ' ', ':'] +
-                     ["#", '&', '+', '[', ']', '{', '}'] +
-                     ["/", "*"] +
-                     ['(', ')', '"', "'", '-', '<UNK>'])
-
-        code2char = dict(enumerate(all_chars))
-        char2code = {v: k for k, v in code2char.items()}
-        vocabulary_size = len(char2code.keys())
-        unk_char = '<UNK>'
-
-        y = []
-        for n, li in enumerate(all_transcripts):
-            y.append(tokenize_ind(li, char2code))
-
-        pickle_dict = {}
-        pickle_dict["target_phrases"] = all_transcripts
-        pickle_dict["vocabulary_size"] = vocabulary_size
-        pickle_dict["vocabulary_tokenizer"] = tokenize_ind
-        pickle_dict["vocabulary"] = char2code
-        pickle_dict["data"] = strokes
-        pickle_dict["target"] = y
-        f = open(pickle_path, "wb")
-        pickle.dump(pickle_dict, f, -1)
-        f.close()
-        print("Pickle file created at {}".format(pickle_path))
-    with open(pickle_path, "rb") as f:
-        pickle_dict = pickle.load(f)
-    return pickle_dict
-"""
+    d["target_phrases"] = all_target_phrases
+    d["vocabulary_size"] = len(tr)
+    d["vocabulary"] = tr
+    d["data"] = [dsi[:, [2, 0, 1]] for dsi in ds]
+    d["target"] = all_target
+    return d
 
 
 def plot_lines_iamondb_example(X, title="", save_name=None):
