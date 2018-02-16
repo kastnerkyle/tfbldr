@@ -56,12 +56,14 @@ def pe(cmd, shell=False, verbose=True):
     return all_lines
 
 
-class base_iterator(object):
+class list_iterator(object):
     def __init__(self, list_of_containers, minibatch_size,
                  axis,
                  start_index=0,
-                 stop_index=np.inf,
+                 stop_index=None,
                  make_mask=False,
+                 randomize=False,
+                 random_state=None,
                  one_hot_class_size=None):
         self.list_of_containers = list_of_containers
         self.minibatch_size = minibatch_size
@@ -75,9 +77,29 @@ class base_iterator(object):
         self.one_hot_class_size = one_hot_class_size
         if one_hot_class_size is not None:
             assert len(self.one_hot_class_size) == len(list_of_containers)
+        self.randomize = randomize
+        self.random_state = random_state
+        if self.randomize and self.random_state is None:
+            raise ValueError("Must pass random_state object is randomize=True")
+        self.num_indices_each = []
+        for lc in list_of_containers:
+            self.num_indices_each.append(len([_ for _ in lc]))
+
+        if not all([nie == self.num_indices_each[0] for nie in self.num_indices_each]):
+            raise ValueError("Uneven length elements in list_of_containers, got {}".format(self.num_indices_each))
+
+        if self.stop_index is None:
+            self.stop_index = self.num_indices_each[0] - 1
+
+        self.this_indices_ = list(range(self.start_index, self.stop_index))
+        self.slice_start_ = 0
+        self.slice_last_ = len(self.this_indices_) - 1
+        # don't shuffle the very first time, in case we are reloading a pickle
 
     def reset(self):
-        self.slice_start_ = self.start_index
+        self.slice_start_ = 0
+        if self.randomize:
+            self.random_state.shuffle(self.this_indices_)
 
     def __iter__(self):
         return self
@@ -87,11 +109,11 @@ class base_iterator(object):
 
     def __next__(self):
         self.slice_end_ = self.slice_start_ + self.minibatch_size
-        if self.slice_end_ > self.stop_index:
+        if self.slice_end_ > self.slice_last_:
             # TODO: Think about boundary issues with weird shaped last mb
             self.reset()
             raise StopIteration("Stop index reached")
-        ind = slice(self.slice_start_, self.slice_end_)
+        ind = self.this_indices_[slice(self.slice_start_, self.slice_end_)]
         self.slice_start_ = self.slice_end_
         if self.make_mask is False:
             res = self._slice_without_masks(ind)
@@ -108,16 +130,8 @@ class base_iterator(object):
                 raise StopIteration("Partial slice returned, end of iteration")
             return res
 
-    def _slice_without_masks(self, ind):
-        raise AttributeError("Subclass base_iterator and override this method")
-
-    def _slice_with_masks(self, ind):
-        raise AttributeError("Subclass base_iterator and override this method")
-
-
-class list_iterator(base_iterator):
     def _slice_without_masks(self, ind, return_shapes=False):
-        sliced_c = [np.asarray(c[ind]) for c in self.list_of_containers]
+        sliced_c = [np.asarray([c[ind_i] for ind_i in ind]) for c in self.list_of_containers]
         # object arrays
         shapes = [[sci.shape for sci in sc] for sc in sliced_c]
 
@@ -369,9 +383,15 @@ def fetch_iamondb():
     with open(pickle_path, "rb") as f:
         pickle_dict = pickle.load(f)
 
-    d = {}
     lbls = pickle_dict["labels"]
     ds = pickle_dict["dataset"]
+    dataset = [np.array(d) for d in ds]
+    temp = []
+    for d in dataset:
+        offs = d[1:, :2] - d[:-1, :2]
+        ends = d[1:, 2]
+        temp += [np.concatenate([[[0., 0., 1.]], np.concatenate([offs, ends[:, None]], axis=1)],       axis=0)]
+    dataset = temp
     tr = pickle_dict["translation"]
     r_tr = {v: k for k, v in tr.items()}
     all_target = []
@@ -382,10 +402,11 @@ def fetch_iamondb():
         dp = "".join([r_tr[li[i]] for i in range(len(li))])
         all_target_phrases.append(dp)
 
+    d = {}
     d["target_phrases"] = all_target_phrases
     d["vocabulary_size"] = len(tr)
     d["vocabulary"] = tr
-    d["data"] = [dsi[:, [2, 0, 1]] for dsi in ds]
+    d["data"] = [dd[:, [2, 0, 1]] for dd in dataset]
     d["target"] = all_target
     return d
 

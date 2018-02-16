@@ -1,215 +1,12 @@
 from __future__ import print_function
-from extras import fetch_iamondb, rsync_fetch, list_iterator
-from tfdllib import Linear, scan, get_params_dict, print_network
-from tfdllib import GRUFork
-from tfdllib import GRU
-from tfdllib import GaussianAttention
-from tfdllib import LogitBernoulliAndCorrelatedLogitGMM
-from tfdllib import LogitBernoulliAndCorrelatedLogitGMMCost
+from extras import fetch_iamondb, rsync_fetch
+from batch_generator import BatchGenerator
+
 import tensorflow as tf
 import numpy as np
 
 import os
 import shutil
-
-# https://github.com/Grzego/handwriting-generation/blob/master/utils.py
-def next_experiment_path():
-    """
-    creates paths for new experiment
-    returns path for next experiment
-    """
-
-    idx = 0
-    path = os.path.join('summary', 'experiment-{}')
-    while os.path.exists(path.format(idx)):
-        idx += 1
-    path = path.format(idx)
-    os.makedirs(os.path.join(path, 'models'))
-    os.makedirs(os.path.join(path, 'backup'))
-    for file in filter(lambda x: x.endswith('.py'), os.listdir('.')):
-        shutil.copy2(file, os.path.join(path, 'backup'))
-    return path
-
-iamondb = rsync_fetch(fetch_iamondb, "leto01")
-data = iamondb["data"]
-target = iamondb["target"]
-
-X = [xx.astype("float32") for xx in data]
-y = [yy.astype("float32") for yy in target]
-
-n_letters = len(iamondb["vocabulary"])
-random_state = np.random.RandomState(1999)
-n_epochs = 40
-n_attention = 10
-n_mdn = 20
-# ~1600 units per RNN
-h_dim = 533
-cut_len = 256
-n_batch = 64
-
-train_itr = list_iterator([X, y], minibatch_size=n_batch, axis=1,
-                          stop_index=10000,
-                          make_mask=True)
-trace_mb, trace_mask, text_mb, text_mask = next(train_itr)
-train_itr.reset()
-
-X_char = tf.placeholder(tf.float32, shape=[None, n_batch, n_letters],
-                        name="X_char")
-X_char_mask = tf.placeholder(tf.float32, shape=[None, n_batch],
-                             name="X_char_mask")
-y_pen = tf.placeholder(tf.float32, shape=[None, n_batch, 3],
-                       name="y_pen")
-y_pen_mask = tf.placeholder(tf.float32, shape=[None, n_batch],
-                            name="y_pen_mask")
-init_h1 = tf.placeholder(tf.float32, [n_batch, h_dim],
-                         name="init_h1")
-init_h2 = tf.placeholder(tf.float32, [n_batch, h_dim],
-                         name="init_h2")
-init_h3 = tf.placeholder(tf.float32, [n_batch, h_dim],
-                         name="init_h3")
-init_att_h = tf.placeholder(tf.float32, [n_batch, h_dim],
-                            name="init_att_h")
-init_att_k = tf.placeholder(tf.float32, [n_batch, n_attention],
-                            name="init_att_k")
-init_att_w = tf.placeholder(tf.float32, [n_batch, n_letters],
-                            name="init_att_w")
-
-y_tm1 = y_pen[:-1, :, :]
-y_t = y_pen[1:, :, :]
-y_mask_tm1 = y_pen_mask[:-1]
-y_mask_t = y_pen_mask[1:]
-
-rnn_init = "truncated_normal"
-forward_init = "truncated_normal"
-use_weight_norm = False
-norm_clip = True
-if norm_clip:
-    grad_clip = 3.
-else:
-    grad_clip = 100.
-
-"""
-proj_y_tm1 = Linear([y_tm1], [3], h_dim,
-                    name="proj_y_tm1",
-                    weight_norm=use_weight_norm,
-                    random_state=random_state,
-                    init=forward_init)
-"""
-
-def step(inp_t, inp_mask_t, h1_tm1, h2_tm1, h3_tm1, att_h_tm1, att_k_tm1, att_w_tm1):
-    r = GaussianAttention([inp_t], [3],
-                          att_h_tm1,
-                          att_k_tm1,
-                          att_w_tm1,
-                          X_char,
-                          n_letters,
-                          h_dim,
-                          att_dim=n_attention,
-                          step_mask=inp_mask_t,
-                          conditioning_mask=X_char_mask,
-                          weight_norm=use_weight_norm,
-                          random_state=random_state,
-                          name="cond_text",
-                          init=rnn_init,
-                          )
-
-    att_h_t, att_k_t, att_w_t, att_phi_t = r
-
-    fork1_t, fork1_gate_t = GRUFork([att_w_t, inp_t], [n_letters, 3],
-                                    h_dim,
-                                    weight_norm=use_weight_norm,
-                                    random_state=random_state,
-                                    name="gru1_fork",
-                                    init=forward_init)
-    h1_t = GRU(fork1_t, fork1_gate_t, h1_tm1, h_dim, h_dim,
-               mask=inp_mask_t,
-               weight_norm=use_weight_norm,
-               random_state=random_state, init=rnn_init, name="gru1")
-
-    fork2_t, fork2_gate_t = GRUFork([att_w_t, h1_t, inp_t],
-                                    [n_letters, h_dim, 3],
-                                    h_dim,
-                                    weight_norm=use_weight_norm,
-                                    random_state=random_state,
-                                    name="gru2_fork",
-                                    init=forward_init)
-
-    h2_t = GRU(fork2_t, fork2_gate_t, h2_tm1, h_dim, h_dim,
-               mask=inp_mask_t,
-               weight_norm=use_weight_norm,
-               random_state=random_state, init=rnn_init, name="gru2")
-
-    fork3_t, fork3_gate_t = GRUFork([att_w_t, h1_t, h2_t, inp_t],
-                                    [n_letters, h_dim, h_dim, 3],
-                                    h_dim,
-                                    weight_norm=use_weight_norm,
-                                    random_state=random_state,
-                                    name="gru3_fork",
-                                    init=forward_init)
-    h3_t = GRU(fork3_t, fork3_gate_t, h3_tm1, h_dim, h_dim,
-               mask=inp_mask_t,
-               weight_norm=use_weight_norm,
-               random_state=random_state, init=rnn_init, name="gru3")
-    return h1_t, h2_t, h3_t, att_h_t, att_k_t, att_w_t
-
-o = scan(step,
-        [y_tm1, y_mask_tm1],
-        [init_h1, init_h2, init_h3, init_att_h, init_att_k, init_att_w])
-h1_o = o[0]
-h2_o = o[1]
-h3_o = o[2]
-att_h = o[3]
-att_k = o[4]
-att_w = o[5]
-
-h1_o = tf.identity(h1_o, name="h1_o")
-h2_o = tf.identity(h2_o, name="h2_o")
-h3_o = tf.identity(h3_o, name="h3_o")
-att_h = tf.identity(att_h, name="att_h")
-att_k = tf.identity(att_k, name="att_k")
-att_w = tf.identity(att_w, name="att_w")
-
-p = LogitBernoulliAndCorrelatedLogitGMM([h1_o, h2_o, h3_o],
-                                        [h_dim, h_dim, h_dim],
-                                         name="b_gmm",
-                                         n_components=n_mdn,
-                                         weight_norm=use_weight_norm,
-                                         random_state=random_state,
-                                         init=forward_init)
-logit_bernoullis = p[0]
-logit_coeffs = p[1]
-mus = p[2]
-logit_sigmas = p[3]
-corrs = p[4]
-
-#cost = BernoulliAndCorrelatedGMMCost(
-#    bernoullis, coeffs, mus, sigmas, corrs, y_t, name="cost")
-cost = LogitBernoulliAndCorrelatedLogitGMMCost(
-    logit_bernoullis, logit_coeffs, mus, logit_sigmas, corrs, y_t, name="cost")
-masked_cost = y_mask_t * cost
-loss = tf.reduce_sum(masked_cost / (tf.reduce_sum(y_mask_t) + 1E-6))
-
-params_dict = get_params_dict()
-params = params_dict.values()
-grads = tf.gradients(loss, params)
-
-if norm_clip:
-    grads, _ = tf.clip_by_global_norm(grads, grad_clip)
-else:
-    grads = [tf.clip_by_value(grad, -grad_clip, grad_clip) for grad in grads]
-
-#learning_rate = 0.0002
-steps = tf.Variable(0.)
-learning_rate = tf.train.exponential_decay(0.001, steps, staircase=True, decay_steps=10000,
-        decay_rate=0.5)
-
-opt = tf.train.AdamOptimizer(learning_rate=learning_rate, use_locking=True)
-updates = opt.apply_gradients(zip(grads, params), global_step=steps)
-#updates = opt.apply_gradients(zip(grads, params))
-
-summary = tf.summary.merge([
-    tf.summary.scalar('loss', loss),
-])
 
 
 def make_tbptt_batches(list_of_arrays, seq_len, drop_if_less_than=10):
@@ -239,64 +36,222 @@ def make_tbptt_batches(list_of_arrays, seq_len, drop_if_less_than=10):
     return new_split_arrays
 
 
-def loop(itr, sess, extras):
-    trace_mb, trace_mask, text_mb, text_mask = next(itr)
-    init_h1_np = np.zeros((n_batch, h_dim)).astype("float32")
-    init_h2_np = np.zeros((n_batch, h_dim)).astype("float32")
-    init_h3_np = np.zeros((n_batch, h_dim)).astype("float32")
-    init_att_h_np = np.zeros((n_batch, h_dim)).astype("float32")
-    init_att_k_np = np.zeros((n_batch, n_attention)).astype("float32")
-    init_att_w_np = np.zeros((n_batch, n_letters)).astype("float32")
+# https://github.com/Grzego/handwriting-generation/blob/master/utils.py
+def next_experiment_path():
+    """
+    creates paths for new experiment
+    returns path for next experiment
+    """
 
-    tbptt_batches = make_tbptt_batches([trace_mb, trace_mask], cut_len)
+    idx = 0
+    path = os.path.join('summary', 'experiment-{}')
+    while os.path.exists(path.format(idx)):
+        idx += 1
+    path = path.format(idx)
+    os.makedirs(os.path.join(path, 'models'))
+    os.makedirs(os.path.join(path, 'backup'))
+    for file in filter(lambda x: x.endswith('.py'), os.listdir('.')):
+        shutil.copy2(file, os.path.join(path, 'backup'))
+    return path
 
-    overall_train_loss = 0.
-    overall_train_len = 0.
-    train_summaries = []
-    for batch in tbptt_batches:
-        tbptt_trace_mb = batch[0]
-        tbptt_trace_mask = batch[1]
-        feed = {X_char: text_mb,
-                X_char_mask: text_mask,
-                y_pen: tbptt_trace_mb,
-                y_pen_mask: tbptt_trace_mask,
-                init_h1: init_h1_np,
-                init_h2: init_h2_np,
-                init_h3: init_h3_np,
-                init_att_h: init_att_h_np,
-                init_att_k: init_att_k_np,
-                init_att_w: init_att_w_np}
+iamondb = rsync_fetch(fetch_iamondb, "leto01")
+data = iamondb["data"]
+target = iamondb["target"]
 
-        if extras["train"]:
-            outs = [loss, summary, updates, h1_o, h2_o, h3_o, att_h, att_k, att_w]
-            p = sess.run(outs, feed)
-            train_loss = p[0]
-            train_summary = p[1]
-            _ = p[2]
-            h1_np = p[3]
-            h2_np = p[4]
-            h3_np = p[5]
-            att_h_np = p[6]
-            att_k_np = p[7]
-            att_w_np = p[8]
+X = [xx.astype("float32") for xx in data]
+y = [yy.astype("float32") for yy in target]
 
-            init_h1_np[:] = h1_np[-1]
-            init_h2_np[:] = h2_np[-1]
-            init_h3_np[:] = h3_np[-1]
-            init_att_h_np[:] = att_h_np[-1]
-            init_att_k_np[:] = att_k_np[-1]
-            init_att_w_np[:] = att_w_np[-1]
-            # undo the mean, so we get the correct aggregate
-            overall_train_loss += len(att_k_np) * train_loss
-            overall_train_len += len(att_k_np)
-            train_summaries.append(train_summary)
-            #train_loss, train_summary, _ = sess.run(outs, feed)
-        else:
-            print("VALID NOT YET CODED")
-            outs = [loss, summary]
-            train_loss, train_summary = sess.run(outs, feed)[0]
-    final_train_loss = overall_train_loss / overall_train_len
-    return [final_train_loss, train_summaries]
+n_letters = len(iamondb["vocabulary"])
+random_state = np.random.RandomState(1999)
+iteration_seed = 42
+n_epochs = 8
+n_attention = 10
+n_mdn = 20
+h_dim = 400
+cut_len = 256
+n_batch = 64
+
+X_char = tf.placeholder(tf.float32, shape=[None, n_batch, n_letters],
+                        name="X_char")
+y_pen_tm1 = tf.placeholder(tf.float32, shape=[None, n_batch, 3],
+                       name="y_pen_tm1")
+y_pen_t = tf.placeholder(tf.float32, shape=[None, n_batch, 3],
+                       name="y_pen_t")
+init_h1 = tf.placeholder(tf.float32, [n_batch, h_dim],
+                         name="init_h1")
+init_h2 = tf.placeholder(tf.float32, [n_batch, h_dim],
+                         name="init_h2")
+init_att_h = tf.placeholder(tf.float32, [n_batch, h_dim],
+                            name="init_att_h")
+init_att_k = tf.placeholder(tf.float32, [n_batch, n_attention],
+                            name="init_att_k")
+init_att_w = tf.placeholder(tf.float32, [n_batch, n_letters],
+                            name="init_att_w")
+
+y_tm1 = y_pen_tm1
+y_t = y_pen_t
+
+"""
+rnn_init = "truncated_normal"
+forward_init = "truncated_normal"
+use_weight_norm = False
+norm_clip = True
+if norm_clip:
+    grad_clip = 3.
+else:
+    grad_clip = 100.
+"""
+
+from tfdllib import make_numpy_weights, make_numpy_biases, dot, scan
+from tfdllib import Linear, SimpleRNN
+
+"""
+def step(inp_t, att_h_tm1):
+    inp_to_h = Linear([inp_t], [3], h_dim, random_state=random_state,
+                      name="inp_to_h")
+    att_h_t = tf.nn.tanh(inp_to_h + att_h_tm1)
+    h_to_out = Linear([att_h_t], [h_dim], h_dim, random_state=random_state,
+                      name="h_to_out")
+    return att_h_t, h_to_out
+"""
+def step(inp_t, h_tm1):
+    output, state = SimpleRNN([inp_t], [3], h_tm1, h_dim, 20, random_state=random_state,
+                              name="l1")
+    h = state[0]
+    return output, h
+
+o = scan(step, [y_tm1], [None, init_att_h])
+loss = tf.reduce_mean(o[0])
+from IPython import embed; embed(); raise ValueError()
+
+
+"""
+o = scan(step,
+        [y_tm1],
+        [init_h1, init_h2, init_att_h, init_att_k, init_att_w])
+"""
+h1_o = o[0]
+h2_o = o[1]
+att_h = o[2]
+att_k = o[3]
+att_w = o[4]
+
+h1_o = tf.identity(h1_o, name="h1_o")
+h2_o = tf.identity(h2_o, name="h2_o")
+att_h = tf.identity(att_h, name="att_h")
+att_k = tf.identity(att_k, name="att_k")
+att_w = tf.identity(att_w, name="att_w")
+
+p = LogitBernoulliAndCorrelatedLogitGMM([h2_o],
+                                        [h_dim],
+                                         name="b_gmm",
+                                         n_components=n_mdn,
+                                         weight_norm=use_weight_norm,
+                                         random_state=random_state,
+                                         init=forward_init)
+logit_bernoullis = p[0]
+logit_coeffs = p[1]
+mus = p[2]
+logit_sigmas = p[3]
+corrs = p[4]
+
+#cost = BernoulliAndCorrelatedGMMCost(
+#    bernoullis, coeffs, mus, sigmas, corrs, y_t, name="cost")
+cost = LogitBernoulliAndCorrelatedLogitGMMCost(
+    logit_bernoullis, logit_coeffs, mus, logit_sigmas, corrs, y_t, name="cost")
+masked_cost = y_mask_t * cost
+#loss = tf.reduce_mean(masked_cost)
+loss = tf.reduce_sum(masked_cost / (tf.reduce_sum(y_mask_t) + 1E-6))
+
+params_dict = get_params_dict()
+params = params_dict.values()
+grads = tf.gradients(loss, params)
+
+if norm_clip:
+    grads, _ = tf.clip_by_global_norm(grads, grad_clip)
+else:
+    grads = [tf.clip_by_value(grad, -grad_clip, grad_clip) for grad in grads]
+
+#learning_rate = 0.0002
+steps = tf.Variable(0.)
+learning_rate = tf.train.exponential_decay(0.001, steps, staircase=True, decay_steps=10000,
+        decay_rate=0.5)
+
+opt = tf.train.AdamOptimizer(learning_rate=learning_rate, use_locking=True)
+updates = opt.apply_gradients(zip(grads, params), global_step=steps)
+#updates = opt.apply_gradients(zip(grads, params))
+
+summary = tf.summary.merge([
+    tf.summary.scalar('loss', loss),
+])
+
+#def loop(itr, sess, extras):
+def loop(bgitr, sess, inits, extras):
+    trace_mb, text_mb, reset, needed = bg.next_batch2()
+    trace_mb = trace_mb.transpose(1, 0, 2)
+    text_mb = text_mb.transpose(1, 0, 2)
+
+    # make better masks...
+    trace_mask = np.ones_like(trace_mb[:, :, 0])
+    text_mask = np.ones_like(text_mb[:, :, 0])
+    trace_last_step = trace_mb.shape[0] * trace_mb[0, :, 0]
+    for mbi in range(trace_mb.shape[1]):
+        for step in range(trace_mb.shape[0]):
+            if trace_mb[step:, mbi].min() == 0. and trace_mb[step:, mbi].max() == 0.:
+                trace_last_step[mbi] = step
+                trace_mask[step:, mbi] = 0.
+                break
+
+    text_last_step = text_mb.shape[0] * text_mb[0, :, 0]
+    for mbi in range(text_mb.shape[1]):
+        for step in range(text_mb.shape[0]):
+            if text_mb[step:, mbi].min() == 0. and text_mb[step:, mbi].max() == 0.:
+                text_last_step[mbi] = step
+                text_mask[step:, mbi] = 0.
+                break
+
+    # they don't use good masking? fine
+    text_mask = 0. * text_mask + 1.
+    trace_mask = 0. * trace_mask + 1.
+
+    #trace_mb, trace_mask, text_mb, text_mask = next(itr)
+    init_h1_np = inits[0]
+    init_h2_np = inits[1]
+    init_att_h_np = inits[2]
+    init_att_k_np = inits[3]
+    init_att_w_np = inits[4]
+
+    if not needed:
+        do_reset = np.where(reset == 1.)[0]
+        init_h1_np[do_reset] = 0. * init_h1_np[do_reset]
+        init_h2_np[do_reset] = 0. * init_h2_np[do_reset]
+        init_att_h_np[do_reset] = 0. * init_att_h_np[do_reset]
+        init_att_k_np[do_reset] = 0. * init_att_k_np[do_reset]
+        init_att_w_np[do_reset] = 0. * init_att_w_np[do_reset]
+
+    #tbptt_batches = make_tbptt_batches([trace_mb, trace_mask], cut_len)
+    feed = {X_char: text_mb,
+            X_char_mask: text_mask,
+            y_pen: trace_mb,
+            y_pen_mask: trace_mask,
+            init_h1: init_h1_np,
+            init_h2: init_h2_np,
+            init_att_h: init_att_h_np,
+            init_att_k: init_att_k_np,
+            init_att_w: init_att_w_np}
+
+    outs = [loss, summary, updates, h1_o, h2_o, att_h, att_k, att_w]
+    p = sess.run(outs, feed)
+    train_loss = p[0]
+    train_summary = p[1]
+    _ = p[2]
+    h1_np = p[3]
+    h2_np = p[4]
+    att_h_np = p[5]
+    att_k_np = p[6]
+    att_w_np = p[7]
+    lasts = [h1_np[-1], h2_np[-1], att_h_np[-1], att_k_np[-1], att_w_np[-1]]
+    return [train_loss, train_summary, lasts]
 
 sess = tf.Session()
 
@@ -314,24 +269,31 @@ with sess.as_default():
     summary_writer.add_session_log(tf.SessionLog(status=tf.SessionLog.START),
                                    global_step=global_step)
 
-    for e in range(n_epochs):
-        print(" ")
-        print("Epoch {}".format(e))
-        try:
+    init_h1_np = np.zeros((n_batch, h_dim)).astype("float32")
+    init_h2_np = np.zeros((n_batch, h_dim)).astype("float32")
+    init_att_h_np = np.zeros((n_batch, h_dim)).astype("float32")
+    init_att_k_np = np.zeros((n_batch, n_attention)).astype("float32")
+    init_att_w_np = np.zeros((n_batch, n_letters)).astype("float32")
+
+    inits = [init_h1_np, init_h2_np, init_att_h_np, init_att_k_np, init_att_w_np]
+
+    bg = BatchGenerator(n_batch, cut_len, random_seed=iteration_seed)
+    total_batch_max = n_epochs * 1000
+
+    e = 0
+    next_inits = inits
+    print(" ")
+    print("Training started")
+    for bi in range(total_batch_max):
+        ret = loop(bg, sess, next_inits, {"train": True})
+        train_loss = ret[0]
+        train_summary = ret[1]
+        next_inits = ret[-1]
+        summary_writer.add_summary(train_summary, global_step=bi)
+        if bi % 1000 == 0:
             print(" ")
-            print("Training started")
-            b = 0
-            while True:
-                ret = loop(train_itr, sess, {"train": True})
-                b += 1
-                l = ret[0]
-                print('\r[{:5d}/{:5d}] loss = {}'.format(b * n_batch, len(target), l), end='')
-                s = ret[1]
-                for si in s:
-                    summary_writer.add_summary(si, global_step=global_step)
-                    global_step += 1
-        except StopIteration:
+            print("Epoch {}".format(e))
             print(" ")
-            print("Training done")
             model_saver.save(sess, os.path.join(experiment_path, 'models', 'model'), global_step=e)
-            train_itr.reset()
+            e += 1
+        print('\r[{:5d}/{:5d}] loss = {}'.format(bi % 1000, 1000, train_loss), end="")
