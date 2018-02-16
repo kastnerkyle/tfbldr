@@ -11,6 +11,7 @@ import shutil
 from tfdllib import scan
 from tfdllib import get_params_dict
 from tfdllib import print_network
+from tfdllib import GaussianAttentionCell
 from tfdllib import LSTMCell
 from tfdllib import LogitBernoulliAndCorrelatedLogitGMM
 from tfdllib import LogitBernoulliAndCorrelatedLogitGMMCost
@@ -114,26 +115,54 @@ else:
 def step(inp_t,
          att_h_tm1, att_c_tm1,
          h1_tm1, c1_tm1,
-         h2_tm1, c2_tm1):
-    att_out_t, state = LSTMCell([inp_t], [3], att_h_tm1, att_c_tm1, h_dim,
-                                random_state=random_state, name="att")
+         h2_tm1, c2_tm1,
+         att_w_tm1, att_k_tm1):
+    r = GaussianAttentionCell([inp_t], [3],
+                              (att_h_tm1, att_c_tm1),
+                              att_k_tm1,
+                              X_char,
+                              n_letters,
+                              h_dim,
+                              att_w_tm1,
+                              attention_scale=1. / 25.,
+                              name="att",
+                              random_state=random_state)
+
+    att_w_t = r[0]
+    att_k_t = r[1]
+    att_phi_t = r[2]
+    state = r[-1]
+
     att_h_t = state[0]
     att_c_t = state[1]
 
-    h1_out_t, state = LSTMCell([inp_t, att_out_t], [3, h_dim],
+    h1_out_t, state = LSTMCell([inp_t, att_w_t, att_h_t],
+                               [3, n_letters, h_dim],
                                h1_tm1, c1_tm1, h_dim,
                                random_state=random_state, name="h1")
     h1_t = state[0]
     c1_t = state[1]
 
-    h2_out_t, state = LSTMCell([inp_t, h1_out_t], [3, h_dim],
+    h2_out_t, state = LSTMCell([inp_t, att_w_t, h1_out_t],
+                               [3, n_letters, h_dim],
                                h2_tm1, c2_tm1, h_dim,
                                random_state=random_state, name="h2")
     h2_t = state[0]
     c2_t = state[1]
-    return h2_out_t, att_h_t, att_c_t, h1_t, c1_t, h2_t, c2_t
+    return h2_out_t, att_h_t, att_c_t, h1_t, c1_t, h2_t, c2_t, att_w_t, att_k_t, att_phi_t
 
-o = scan(step, [y_tm1], [None, init_att_h, init_att_c, init_h1, init_c1, init_h2, init_c2])
+outputs_info = [None,
+                init_att_h,
+                init_att_c,
+                init_h1,
+                init_c1,
+                init_h2,
+                init_c2,
+                init_att_w, init_att_k, None]
+
+o = scan(step, [y_tm1], outputs_info)
+
+#return h2_out_t, att_h_t, att_c_t, h1_t, c1_t, h2_t, c2_t, att_w_t, att_k_t, att_phi_t
 sout = o[0]
 att_h = o[1]
 att_c = o[2]
@@ -141,12 +170,19 @@ h1 = o[3]
 c1 = o[4]
 h2 = o[5]
 c2 = o[6]
+att_w = o[7]
+att_k = o[8]
+att_phi = o[9]
+
 att_h = tf.identity(att_h, name="att_h")
 att_c = tf.identity(att_c, name="att_c")
 h1 = tf.identity(h1, name="h1")
 c1 = tf.identity(c1, name="c1")
 h2 = tf.identity(h2, name="h2")
 c2 = tf.identity(c2, name="c2")
+att_w = tf.identity(att_w, name="att_w")
+att_k = tf.identity(att_k, name="att_k")
+att_phi = tf.identity(att_phi, name="att_phi")
 
 p = LogitBernoulliAndCorrelatedLogitGMM([sout],
                                         [h_dim],
@@ -225,8 +261,8 @@ def loop(bgitr, sess, inits, extras):
     init_c2_np = inits[3]
     init_att_h_np = inits[4]
     init_att_c_np = inits[5]
-    #init_att_k_np = inits[6]
-    #init_att_w_np = inits[7]
+    init_att_k_np = inits[6]
+    init_att_w_np = inits[7]
 
     if not needed:
         do_reset = np.where(reset == 1.)[0]
@@ -236,8 +272,8 @@ def loop(bgitr, sess, inits, extras):
         init_c2_np[do_reset] = 0. * init_c2_np[do_reset]
         init_att_h_np[do_reset] = 0. * init_att_h_np[do_reset]
         init_att_c_np[do_reset] = 0. * init_att_c_np[do_reset]
-        #init_att_k_np[do_reset] = 0. * init_att_k_np[do_reset]
-        #init_att_w_np[do_reset] = 0. * init_att_w_np[do_reset]
+        init_att_k_np[do_reset] = 0. * init_att_k_np[do_reset]
+        init_att_w_np[do_reset] = 0. * init_att_w_np[do_reset]
 
     #tbptt_batches = make_tbptt_batches([trace_mb, trace_mask], cut_len)
     feed = {X_char: text_mb,
@@ -248,15 +284,15 @@ def loop(bgitr, sess, inits, extras):
             init_h2: init_h2_np,
             init_c2: init_c2_np,
             init_att_h: init_att_h_np,
-            init_att_c: init_att_c_np,}
-            #init_att_k: init_att_k_np,
-            #init_att_w: init_att_w_np}
+            init_att_c: init_att_c_np,
+            init_att_k: init_att_k_np,
+            init_att_w: init_att_w_np}
 
     outs = [loss, summary, updates,
             h1, c1,
             h2, c2,
-            att_h, att_c]
-  #          att_k, att_w]
+            att_h, att_c,
+            att_k, att_w]
     p = sess.run(outs, feed)
     train_loss = p[0]
     train_summary = p[1]
@@ -267,16 +303,16 @@ def loop(bgitr, sess, inits, extras):
     c2_np = p[6]
     att_h_np = p[7]
     att_c_np = p[8]
-    #att_k_np = p[9]
-    #att_w_np = p[10]
+    att_k_np = p[9]
+    att_w_np = p[10]
     lasts = [h1_np[-1],
              c1_np[-1],
              h2_np[-1],
              c2_np[-1],
              att_h_np[-1],
-             att_c_np[-1],]
-    #         att_k_np[-1],
-    #         att_w_np[-1]]
+             att_c_np[-1],
+             att_k_np[-1],
+             att_w_np[-1]]
     return [train_loss, train_summary, lasts]
 
 sess = tf.Session()

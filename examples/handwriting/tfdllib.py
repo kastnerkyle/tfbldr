@@ -384,8 +384,10 @@ def dot(a, b):
 
 def scan(fn, sequences, outputs_info):
     nonepos = [n for n, o in enumerate(outputs_info) if o is None]
-    sequences_and_nonnone = sequences + [o for o in outputs_info if o is not None]
-    inf_ret = fn(*sequences_and_nonnone)
+    nonnone = [o for o in outputs_info if o is not None]
+    sequences_and_nonnone = sequences + nonnone
+    sliced = [s[0] for s in sequences] + nonnone
+    inf_ret = fn(*sliced)
     if len(outputs_info) < len(inf_ret):
         raise ValueError("More outputs from `fn` than elements in outputs_info. Expected {} outs, given outputs_info of length {}, but `fn` returns {}. Pass None in outputs_info for returns which don't accumulate".format(len(outputs_info), len(outputs_info), len(inf_ret)))
     initializers = []
@@ -393,8 +395,7 @@ def scan(fn, sequences, outputs_info):
         if outputs_info[n] is not None:
             initializers.append(outputs_info[n])
         else:
-            initializers.append(0. * inf_ret[n][0])
-
+            initializers.append(0. * inf_ret[n])
     def wrapwrap(nonepos, initializers):
         type_class = "list" if isinstance(initializers, list) else "tuple"
         def fnwrap(accs, inps):
@@ -501,10 +502,12 @@ def LSTMCell(list_of_inputs, list_of_input_dims,
     input_dim = sum(list_of_input_dims)
     hidden_dim = 4 * num_units
 
-    if init is None:
+    if init is None or init == "glorot_uniform":
         inp_init = "glorot_uniform"
         h_init = "glorot_uniform"
         out_init = "glorot_uniform"
+    else:
+        raise ValueError("Unknown init argument {}".format(init))
 
     inp_to_pre_w_np, = make_numpy_weights(input_dim, [hidden_dim],
                                           random_state=random_state,
@@ -546,6 +549,104 @@ def LSTMCell(list_of_inputs, list_of_input_dims,
     else:
         final_out = h
     return final_out, (h, c)
+
+
+def GaussianAttentionCell(list_of_step_inputs, list_of_step_input_dims,
+                          previous_state_list,
+                          previous_attention_position,
+                          full_conditioning_tensor,
+                          full_conditioning_tensor_dim,
+                          num_units,
+                          previous_attention_weight,
+                          att_dim=10,
+                          attention_scale=1.,
+                          cell_type="lstm",
+                          name=None,
+                          random_state=None, strict=None, init=None):
+    #returns w_t, k_t, phi_t, state
+    # where state is the state tuple retruned by the inner cell_type
+
+    if name is None:
+        name = _get_name()
+    name = name + "_gaussian_attention"
+
+    check = any([len(shape(si)) != 2 for si in list_of_step_inputs])
+    if check:
+        raise ValueError("Unable to support step_input with n_dims != 2")
+
+    if init is None:
+        rnn_init = "glorot_uniform"
+        forward_init = "truncated_normal"
+    else:
+        raise ValueError("init != None not supported")
+
+    if cell_type == "gru":
+        raise ValueError("NYI")
+    elif cell_type == "lstm":
+        att_rnn_out, state = LSTMCell(list_of_step_inputs + [previous_attention_weight],
+                                      list_of_step_input_dims + [full_conditioning_tensor_dim],
+                                      previous_state_list[0], previous_state_list[1],
+                                      num_units, random_state=random_state,
+                                      name=name + "_gauss_att_lstm",
+                                      init=rnn_init)
+    else:
+        raise ValueError("Unsupported cell_type %s" % cell_type)
+
+    ret = Linear(
+        list_of_inputs=[att_rnn_out], list_of_input_dims=[num_units],
+        output_dim=3 * att_dim, name=name + "_group",
+        random_state=random_state,
+        strict=strict, init=forward_init)
+    a_t = ret[:, :att_dim]
+    b_t = ret[:, att_dim:2 * att_dim]
+    k_t = ret[:, 2 * att_dim:]
+
+    k_tm1 = previous_attention_position
+    cond_dim = full_conditioning_tensor_dim
+    ctx = full_conditioning_tensor
+
+    """
+    ctx = Linear(
+        list_of_inputs=[full_conditioning_tensor],
+        list_of_input_dims=[full_conditioning_tensor_dim],
+        output_dim=next_proj_dim, name=name + "_proj_ctx",
+        weight_norm=weight_norm,
+        random_state=random_state,
+        strict=strict, init=ctx_forward_init)
+    """
+
+    a_t = tf.exp(a_t)
+    b_t = tf.exp(b_t)
+    a_t = tf.identity(a_t, name=name + "_a_scale")
+    b_t = tf.identity(b_t, name=name + "_b_scale")
+    step_size = attention_scale * tf.exp(k_t)
+    k_t = k_tm1 + step_size
+    k_t = tf.identity(k_t, name=name + "_position")
+
+    # tf.shape and tensor.shape are not the same...
+    u = tf.cast(tf.range(0., limit=tf.shape(full_conditioning_tensor)[0], delta=1.), dtype=tf.float32)
+    u = tf.expand_dims(tf.expand_dims(u, axis=0), axis=0)
+
+    def calc_phi(lk_t, la_t, lb_t, lu):
+        la_t = tf.expand_dims(la_t, axis=2)
+        lb_t = tf.expand_dims(lb_t, axis=2)
+        lk_t = tf.expand_dims(lk_t, axis=2)
+        phi = tf.exp(-tf.square(lk_t - lu) * lb_t) * la_t
+        phi = tf.reduce_sum(phi, axis=1, keep_dims=True)
+        return phi
+
+    phi_t = calc_phi(k_t, a_t, b_t, u)
+    phi_t = tf.identity(phi_t, name=name + "_phi")
+
+    # calculate and return stopping criteria
+    #sh_t = calc_phi(k_t, a_t, b_t, u_max)
+    # mask using conditioning mask?
+    #w_t = phi_t * tf.transpose(ctx, (1, 0, 2)) * tf.transpose(tf.expand_dims(ctx_mask, axis=2), (1, 0, 2))
+    w_t = tf.matmul(phi_t, tf.transpose(ctx, (1, 0, 2)))
+    phi_t = phi_t[:, 0]
+    w_t = w_t[:, 0]
+    w_t = tf.identity(w_t, name=name + "_post_weighting")
+    return w_t, k_t, phi_t, state
 
 
 def LogitBernoulliAndCorrelatedLogitGMM(
