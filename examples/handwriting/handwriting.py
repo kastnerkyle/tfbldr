@@ -8,6 +8,12 @@ import numpy as np
 import os
 import shutil
 
+from tfdllib import scan
+from tfdllib import get_params_dict
+from tfdllib import print_network
+from tfdllib import LSTMCell
+from tfdllib import LogitBernoulliAndCorrelatedLogitGMM
+from tfdllib import LogitBernoulliAndCorrelatedLogitGMMCost
 
 def make_tbptt_batches(list_of_arrays, seq_len, drop_if_less_than=10):
     """ Assume axis 0 is sequence axis """
@@ -81,88 +87,85 @@ init_att_h = tf.placeholder(tf.float32, [n_batch, h_dim],
                             name="init_att_h")
 init_att_c = tf.placeholder(tf.float32, [n_batch, h_dim],
                             name="init_att_c")
-
-init_h1 = tf.placeholder(tf.float32, [n_batch, h_dim],
-                         name="init_h1")
-init_h2 = tf.placeholder(tf.float32, [n_batch, h_dim],
-                         name="init_h2")
 init_att_k = tf.placeholder(tf.float32, [n_batch, n_attention],
                             name="init_att_k")
 init_att_w = tf.placeholder(tf.float32, [n_batch, n_letters],
                             name="init_att_w")
 
+init_h1 = tf.placeholder(tf.float32, [n_batch, h_dim],
+                         name="init_h1")
+init_c1 = tf.placeholder(tf.float32, [n_batch, h_dim],
+                         name="init_c1")
+init_h2 = tf.placeholder(tf.float32, [n_batch, h_dim],
+                         name="init_h2")
+init_c2 = tf.placeholder(tf.float32, [n_batch, h_dim],
+                         name="init_c2")
+
 y_tm1 = y_pen_tm1
 y_t = y_pen_t
 
-"""
-rnn_init = "truncated_normal"
 forward_init = "truncated_normal"
-use_weight_norm = False
 norm_clip = True
 if norm_clip:
     grad_clip = 3.
 else:
     grad_clip = 100.
-"""
 
-from tfdllib import make_numpy_weights, make_numpy_biases, dot, scan
-from tfdllib import Linear, SimpleRNNCell, LSTMCell
+def step(inp_t,
+         att_h_tm1, att_c_tm1,
+         h1_tm1, c1_tm1,
+         h2_tm1, c2_tm1):
+    att_out_t, state = LSTMCell([inp_t], [3], att_h_tm1, att_c_tm1, h_dim,
+                                random_state=random_state, name="att")
+    att_h_t = state[0]
+    att_c_t = state[1]
 
-"""
-def step(inp_t, h_tm1):
-    output, state = SimpleRNNCell([inp_t], [3], h_tm1, h_dim, 20,
-                                  random_state=random_state, name="l1")
-    h = state[0]
-    return output, h
-"""
-def step(inp_t, h_tm1, c_tm1):
-    output, state = LSTMCell([inp_t], [3], h_tm1, c_tm1, h_dim, 20,
-                             random_state=random_state, name="l1")
-    h = state[0]
-    c = state[1]
-    return output, h, c
+    h1_out_t, state = LSTMCell([inp_t, att_out_t], [3, h_dim],
+                               h1_tm1, c1_tm1, h_dim,
+                               random_state=random_state, name="h1")
+    h1_t = state[0]
+    c1_t = state[1]
 
-o = scan(step, [y_tm1], [None, init_att_h, init_att_c])
-loss = tf.reduce_mean(o[0])
-from IPython import embed; embed(); raise ValueError()
+    h2_out_t, state = LSTMCell([inp_t, h1_out_t], [3, h_dim],
+                               h2_tm1, c2_tm1, h_dim,
+                               random_state=random_state, name="h2")
+    h2_t = state[0]
+    c2_t = state[1]
+    return h2_out_t, att_h_t, att_c_t, h1_t, c1_t, h2_t, c2_t
 
-"""
-o = scan(step,
-        [y_tm1],
-        [init_h1, init_h2, init_att_h, init_att_k, init_att_w])
-"""
-h1_o = o[0]
-h2_o = o[1]
-att_h = o[2]
-att_k = o[3]
-att_w = o[4]
-
-h1_o = tf.identity(h1_o, name="h1_o")
-h2_o = tf.identity(h2_o, name="h2_o")
+o = scan(step, [y_tm1], [None, init_att_h, init_att_c, init_h1, init_c1, init_h2, init_c2])
+sout = o[0]
+att_h = o[1]
+att_c = o[2]
+h1 = o[3]
+c1 = o[4]
+h2 = o[5]
+c2 = o[6]
 att_h = tf.identity(att_h, name="att_h")
-att_k = tf.identity(att_k, name="att_k")
-att_w = tf.identity(att_w, name="att_w")
+att_c = tf.identity(att_c, name="att_c")
+h1 = tf.identity(h1, name="h1")
+c1 = tf.identity(c1, name="c1")
+h2 = tf.identity(h2, name="h2")
+c2 = tf.identity(c2, name="c2")
 
-p = LogitBernoulliAndCorrelatedLogitGMM([h2_o],
+p = LogitBernoulliAndCorrelatedLogitGMM([sout],
                                         [h_dim],
-                                         name="b_gmm",
-                                         n_components=n_mdn,
-                                         weight_norm=use_weight_norm,
-                                         random_state=random_state,
-                                         init=forward_init)
+                                        name="b_gmm",
+                                        n_components=n_mdn,
+                                        random_state=random_state,
+                                        init=forward_init)
 logit_bernoullis = p[0]
 logit_coeffs = p[1]
 mus = p[2]
 logit_sigmas = p[3]
 corrs = p[4]
 
-#cost = BernoulliAndCorrelatedGMMCost(
-#    bernoullis, coeffs, mus, sigmas, corrs, y_t, name="cost")
 cost = LogitBernoulliAndCorrelatedLogitGMMCost(
     logit_bernoullis, logit_coeffs, mus, logit_sigmas, corrs, y_t, name="cost")
-masked_cost = y_mask_t * cost
+#masked_cost = y_mask_t * cost
 #loss = tf.reduce_mean(masked_cost)
-loss = tf.reduce_sum(masked_cost / (tf.reduce_sum(y_mask_t) + 1E-6))
+#loss = tf.reduce_sum(masked_cost / (tf.reduce_sum(y_mask_t) + 1E-6))
+loss = tf.reduce_mean(cost)
 
 params_dict = get_params_dict()
 params = params_dict.values()
@@ -217,41 +220,63 @@ def loop(bgitr, sess, inits, extras):
 
     #trace_mb, trace_mask, text_mb, text_mask = next(itr)
     init_h1_np = inits[0]
-    init_h2_np = inits[1]
-    init_att_h_np = inits[2]
-    init_att_k_np = inits[3]
-    init_att_w_np = inits[4]
+    init_c1_np = inits[1]
+    init_h2_np = inits[2]
+    init_c2_np = inits[3]
+    init_att_h_np = inits[4]
+    init_att_c_np = inits[5]
+    #init_att_k_np = inits[6]
+    #init_att_w_np = inits[7]
 
     if not needed:
         do_reset = np.where(reset == 1.)[0]
         init_h1_np[do_reset] = 0. * init_h1_np[do_reset]
+        init_c1_np[do_reset] = 0. * init_c1_np[do_reset]
         init_h2_np[do_reset] = 0. * init_h2_np[do_reset]
+        init_c2_np[do_reset] = 0. * init_c2_np[do_reset]
         init_att_h_np[do_reset] = 0. * init_att_h_np[do_reset]
-        init_att_k_np[do_reset] = 0. * init_att_k_np[do_reset]
-        init_att_w_np[do_reset] = 0. * init_att_w_np[do_reset]
+        init_att_c_np[do_reset] = 0. * init_att_c_np[do_reset]
+        #init_att_k_np[do_reset] = 0. * init_att_k_np[do_reset]
+        #init_att_w_np[do_reset] = 0. * init_att_w_np[do_reset]
 
     #tbptt_batches = make_tbptt_batches([trace_mb, trace_mask], cut_len)
     feed = {X_char: text_mb,
-            X_char_mask: text_mask,
-            y_pen: trace_mb,
-            y_pen_mask: trace_mask,
+            y_pen_tm1: trace_mb[:-1],
+            y_pen_t: trace_mb[1:],
             init_h1: init_h1_np,
+            init_c1: init_c1_np,
             init_h2: init_h2_np,
+            init_c2: init_c2_np,
             init_att_h: init_att_h_np,
-            init_att_k: init_att_k_np,
-            init_att_w: init_att_w_np}
+            init_att_c: init_att_c_np,}
+            #init_att_k: init_att_k_np,
+            #init_att_w: init_att_w_np}
 
-    outs = [loss, summary, updates, h1_o, h2_o, att_h, att_k, att_w]
+    outs = [loss, summary, updates,
+            h1, c1,
+            h2, c2,
+            att_h, att_c]
+  #          att_k, att_w]
     p = sess.run(outs, feed)
     train_loss = p[0]
     train_summary = p[1]
     _ = p[2]
     h1_np = p[3]
-    h2_np = p[4]
-    att_h_np = p[5]
-    att_k_np = p[6]
-    att_w_np = p[7]
-    lasts = [h1_np[-1], h2_np[-1], att_h_np[-1], att_k_np[-1], att_w_np[-1]]
+    c1_np = p[4]
+    h2_np = p[5]
+    c2_np = p[6]
+    att_h_np = p[7]
+    att_c_np = p[8]
+    #att_k_np = p[9]
+    #att_w_np = p[10]
+    lasts = [h1_np[-1],
+             c1_np[-1],
+             h2_np[-1],
+             c2_np[-1],
+             att_h_np[-1],
+             att_c_np[-1],]
+    #         att_k_np[-1],
+    #         att_w_np[-1]]
     return [train_loss, train_summary, lasts]
 
 sess = tf.Session()
@@ -271,12 +296,21 @@ with sess.as_default():
                                    global_step=global_step)
 
     init_h1_np = np.zeros((n_batch, h_dim)).astype("float32")
+    init_c1_np = np.zeros((n_batch, h_dim)).astype("float32")
     init_h2_np = np.zeros((n_batch, h_dim)).astype("float32")
+    init_c2_np = np.zeros((n_batch, h_dim)).astype("float32")
     init_att_h_np = np.zeros((n_batch, h_dim)).astype("float32")
+    init_att_c_np = np.zeros((n_batch, h_dim)).astype("float32")
     init_att_k_np = np.zeros((n_batch, n_attention)).astype("float32")
     init_att_w_np = np.zeros((n_batch, n_letters)).astype("float32")
 
-    inits = [init_h1_np, init_h2_np, init_att_h_np, init_att_k_np, init_att_w_np]
+    inits = [init_h1_np,
+             init_c1_np,
+             init_h2_np,
+             init_c2_np,
+             init_att_h_np,
+             init_att_c_np,
+             init_att_k_np, init_att_w_np]
 
     bg = BatchGenerator(n_batch, cut_len, random_seed=iteration_seed)
     total_batch_max = n_epochs * 1000
