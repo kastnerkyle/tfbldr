@@ -255,6 +255,32 @@ def np_variance_scaled_uniform(shape, random_state, scale=1.):
     return random_state.uniform(low=-bound, high=bound, size=shp).astype(
         "float32")
 
+def np_glorot_uniform(shape, random_state, scale=1.):
+    """
+    Builds a numpy variable filled with random values
+    Parameters
+    ----------
+    shape, tuple of ints or tuple of tuples
+        shape of values to initialize
+        tuple of ints should be single shape
+        tuple of tuples is primarily for convnets and should be of form
+        ((n_in_kernels, kernel_width, kernel_height),
+         (n_out_kernels, kernel_width, kernel_height))
+    random_state, numpy.random.RandomState() object
+    scale, float (default 1.)
+        default of 1. results in uniform random values
+        with 1. * sqrt(6 / (n_in + n_out)) scale
+    Returns
+    -------
+    initialized_scaled, array-like
+        Array-like of random values the same size as shape parameter
+    """
+    shp = shape
+    kern_sum = sum(shp)
+    bound = scale * np.sqrt(6. / kern_sum)
+    return random_state.uniform(low=-bound, high=bound, size=shp).astype(
+        "float32")
+
 
 def np_ortho(shape, random_state, scale=1.):
     """
@@ -316,6 +342,8 @@ def make_numpy_weights(in_dim, out_dims, random_state, init=None,
             else:
                 ff[i] = np_variance_scaled_uniform
                 fs[i] = 1.
+        elif init == "glorot_uniform":
+            ff[i] = np_glorot_uniform
         elif init == "normal":
             ff[i] = np_normal
             fs[i] = 0.01
@@ -379,101 +407,11 @@ def scan(fn, sequences, outputs_info):
     return r
 
 
-def gru_weights(input_dim, hidden_dim, forward_init=None, hidden_init="normal",
-                random_state=None):
-    if random_state is None:
-        raise ValueError("Must pass random_state!")
-    shape = (input_dim, hidden_dim)
-    if forward_init == "normal":
-        W = np.hstack([np_normal(shape, random_state),
-                       np_normal(shape, random_state),
-                       np_normal(shape, random_state)])
-    elif forward_init == "fan":
-        W = np.hstack([np_tanh_fan_normal(shape, random_state),
-                       np_tanh_fan_normal(shape, random_state),
-                       np_tanh_fan_normal(shape, random_state)])
-    elif forward_init == "truncated_normal":
-        W = np.hstack([np_truncated_normal(shape, random_state),
-                       np_truncated_normal(shape, random_state),
-                       np_truncated_normal(shape, random_state)])
-    elif forward_init is None:
-        if input_dim == hidden_dim:
-            W = np.hstack([np_ortho(shape, random_state),
-                           np_ortho(shape, random_state),
-                           np_ortho(shape, random_state)])
-        else:
-            # lecun
-            W = np.hstack([np_variance_scaled_uniform(shape, random_state),
-                           np_variance_scaled_uniform(shape, random_state),
-                           np_variance_scaled_uniform(shape, random_state)])
-    else:
-        raise ValueError("Unknown forward init type %s" % forward_init)
-    b = np_zeros((3 * shape[1],))
-
-    if hidden_init == "normal":
-        Wur = np.hstack([np_normal((shape[1], shape[1]), random_state),
-                         np_normal((shape[1], shape[1]), random_state), ])
-        U = np_normal((shape[1], shape[1]), random_state)
-    elif hidden_init == "ortho":
-        Wur = np.hstack([np_ortho((shape[1], shape[1]), random_state),
-                         np_ortho((shape[1], shape[1]), random_state), ])
-        U = np_ortho((shape[1], shape[1]), random_state)
-    elif hidden_init == "truncated_normal":
-        Wur = np.hstack([np_truncated_normal((shape[1], shape[1]), random_state),
-                         np_truncated_normal((shape[1], shape[1]), random_state), ])
-        U = np_ortho((shape[1], shape[1]), random_state)
-    return W, b, Wur, U
-
-
-def lstm_weights(input_dim, hidden_dim, forward_init=None, hidden_init="normal",
-                 random_state=None):
-    if random_state is None:
-        raise ValueError("Must pass random_state!")
-    shape = (input_dim, hidden_dim)
-    if forward_init == "normal":
-        W = np.hstack([np_normal(shape, random_state),
-                       np_normal(shape, random_state),
-                       np_normal(shape, random_state),
-                       np_normal(shape, random_state)])
-    elif forward_init == "fan":
-        W = np.hstack([np_tanh_fan_normal(shape, random_state),
-                       np_tanh_fan_normal(shape, random_state),
-                       np_tanh_fan_normal(shape, random_state),
-                       np_tanh_fan_normal(shape, random_state)])
-    elif forward_init is None:
-        if input_dim == hidden_dim:
-            W = np.hstack([np_ortho(shape, random_state),
-                           np_ortho(shape, random_state),
-                           np_ortho(shape, random_state),
-                           np_ortho(shape, random_state)])
-        else:
-            # lecun
-            W = np.hstack([np_variance_scaled_uniform(shape, random_state),
-                           np_variance_scaled_uniform(shape, random_state),
-                           np_variance_scaled_uniform(shape, random_state),
-                           np_variance_scaled_uniform(shape, random_state)])
-    else:
-        raise ValueError("Unknown forward init type %s" % forward_init)
-    b = np_zeros((4 * shape[1],))
-    # Set forget gate bias to 1
-    b[shape[1]:2 * shape[1]] += 1.
-
-    if hidden_init == "normal":
-        U = np.hstack([np_normal((shape[1], shape[1]), random_state),
-                       np_normal((shape[1], shape[1]), random_state),
-                       np_normal((shape[1], shape[1]), random_state),
-                       np_normal((shape[1], shape[1]), random_state), ])
-    elif hidden_init == "ortho":
-        U = np.hstack([np_ortho((shape[1], shape[1]), random_state),
-                       np_ortho((shape[1], shape[1]), random_state),
-                       np_ortho((shape[1], shape[1]), random_state),
-                       np_ortho((shape[1], shape[1]), random_state), ])
-    return W, b, U
-
-
 def Linear(list_of_inputs, list_of_input_dims, output_dim, random_state,
            name=None, init=None, scale="default", biases=True, bias_offset=0.,
            strict=None):
+    if random_state is None:
+        raise ValueError("Must pass random_state")
     nd = ndim(list_of_inputs[0])
     input_var = tf.concat(list_of_inputs, axis=nd - 1)
     input_dim = sum(list_of_input_dims)
@@ -521,23 +459,85 @@ def Linear(list_of_inputs, list_of_input_dims, output_dim, random_state,
         except NameError:
             biases = tf.Variable(b, trainable=True, name=name_b)
             _set_shared(name_b, biases)
-    out = out + biases
+        out = out + biases
     out = tf.identity(out, name=name_out)
     return out
 
 
-def SimpleRNN(list_of_inputs, list_of_input_dims, num_units,
-              hidden_dim, output_dim, random_state,
-              name=None, init=None, scale="default", biases=True, bias_offset=0.,
-              strict=False):
-    # output is the thing to use in following layers, state is a tuple that feeds into the next call
+def SimpleRNNCell(list_of_inputs, list_of_input_dims, previous_hidden,
+                  num_units, output_dim, random_state=None,
+                  name=None, init=None, scale="default", strict=None):
+    # output is the thing to use in following layers, state is a tuple that contains things to feed into the next call
+    if random_state is None:
+        raise ValueError("Must pass random_state")
 
     if name is None:
         name = _get_name()
     hidden_dim = num_units
     inp_to_h = Linear(list_of_inputs, list_of_input_dims, hidden_dim, random_state=random_state,
-                      name=name + "_simple_rnn_inp_to_h")
-    h = tf.nn.tanh(inp_to_h + previous_hidden)
+                      name=name + "_simple_rnn_inp_to_h",
+                      init=init, strict=strict)
+    h_to_h = Linear([previous_hidden], [hidden_dim], hidden_dim, random_state=random_state,
+                    name=name + "_simple_rnn_h_to_h", biases=False,
+                    init=init, strict=strict)
+    h = tf.nn.tanh(inp_to_h + h_to_h)
     h_to_out = Linear([h], [hidden_dim], output_dim, random_state=random_state,
-                      name=name + "_simple_rnn_h_to_out")
+                      name=name + "_simple_rnn_h_to_out",
+                      init=init, strict=strict)
     return h_to_out, (h,)
+
+
+def LSTMCell(list_of_inputs, list_of_input_dims,
+             previous_hidden, previous_cell,
+             num_units, output_dim, random_state=None,
+             name=None, init=None, scale="default", strict=None):
+    # output is the thing to use in following layers, state is a tuple that feeds into the next call
+    if random_state is None:
+        raise ValueError("Must pass random_state")
+
+    if name is None:
+        name = _get_name()
+
+    input_dim = sum(list_of_input_dims)
+    hidden_dim = 4 * num_units
+
+    if init is None:
+        inp_init = "glorot_uniform"
+        h_init = "glorot_uniform"
+        out_init = "glorot_uniform"
+
+    inp_to_pre_w_np, = make_numpy_weights(input_dim, [hidden_dim],
+                                          random_state=random_state,
+                                          init=inp_init)
+    inp_to_pre_b_np, = make_numpy_biases([hidden_dim])
+    # set forget gate bias to 1.
+    inp_to_pre_b_np[num_units:2*num_units] = 1.
+    inp_to_pre = Linear(list_of_inputs, list_of_input_dims, hidden_dim,
+                        random_state=random_state,
+                        name=name + "_lstm_inp_to_pre",
+                        init=(inp_to_pre_w_np, inp_to_pre_b_np), strict=strict)
+    h_to_hpre_w_np, = make_numpy_weights(num_units, [hidden_dim],
+                                         random_state=random_state,
+                                         init=h_init)
+    h_to_hpre = Linear([previous_hidden], [num_units], hidden_dim,
+                       random_state=random_state,
+                       name=name + "_lstm_h_to_hpre",
+                       init=(h_to_hpre_w_np,), biases=False, strict=strict)
+
+    def _slice(arr, i):
+        return arr[..., i * num_units:(i + 1) * num_units]
+
+    i_ = tf.nn.sigmoid(_slice(inp_to_pre, 0) + _slice(h_to_hpre, 0))
+    f_ = tf.nn.sigmoid(_slice(inp_to_pre, 1) + _slice(h_to_hpre, 1))
+    o_ = tf.nn.sigmoid(_slice(inp_to_pre, 2) + _slice(h_to_hpre, 2))
+    g_ = tf.nn.tanh(_slice(inp_to_pre, 3) + _slice(h_to_hpre, 3))
+    c = previous_cell * f_ + g_ * i_
+    h = tf.nn.tanh(c) * o_
+    h_to_out_w_np, = make_numpy_weights(num_units, [output_dim],
+                                        random_state=random_state,
+                                        init=out_init)
+    h_to_out_b_np, = make_numpy_biases([output_dim])
+    h_to_out = Linear([h], [num_units], output_dim, random_state=random_state,
+                      name=name + "_lstm_h_to_out",
+                      init=(h_to_out_w_np, h_to_out_b_np), strict=strict)
+    return h_to_out, (h, c)

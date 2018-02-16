@@ -77,12 +77,15 @@ y_pen_tm1 = tf.placeholder(tf.float32, shape=[None, n_batch, 3],
                        name="y_pen_tm1")
 y_pen_t = tf.placeholder(tf.float32, shape=[None, n_batch, 3],
                        name="y_pen_t")
+init_att_h = tf.placeholder(tf.float32, [n_batch, h_dim],
+                            name="init_att_h")
+init_att_c = tf.placeholder(tf.float32, [n_batch, h_dim],
+                            name="init_att_c")
+
 init_h1 = tf.placeholder(tf.float32, [n_batch, h_dim],
                          name="init_h1")
 init_h2 = tf.placeholder(tf.float32, [n_batch, h_dim],
                          name="init_h2")
-init_att_h = tf.placeholder(tf.float32, [n_batch, h_dim],
-                            name="init_att_h")
 init_att_k = tf.placeholder(tf.float32, [n_batch, n_attention],
                             name="init_att_k")
 init_att_w = tf.placeholder(tf.float32, [n_batch, n_letters],
@@ -103,27 +106,25 @@ else:
 """
 
 from tfdllib import make_numpy_weights, make_numpy_biases, dot, scan
-from tfdllib import Linear, SimpleRNN
+from tfdllib import Linear, SimpleRNNCell, LSTMCell
 
-"""
-def step(inp_t, att_h_tm1):
-    inp_to_h = Linear([inp_t], [3], h_dim, random_state=random_state,
-                      name="inp_to_h")
-    att_h_t = tf.nn.tanh(inp_to_h + att_h_tm1)
-    h_to_out = Linear([att_h_t], [h_dim], h_dim, random_state=random_state,
-                      name="h_to_out")
-    return att_h_t, h_to_out
 """
 def step(inp_t, h_tm1):
-    output, state = SimpleRNN([inp_t], [3], h_tm1, h_dim, 20, random_state=random_state,
-                              name="l1")
+    output, state = SimpleRNNCell([inp_t], [3], h_tm1, h_dim, 20,
+                                  random_state=random_state, name="l1")
     h = state[0]
     return output, h
+"""
+def step(inp_t, h_tm1, c_tm1):
+    output, state = LSTMCell([inp_t], [3], h_tm1, c_tm1, h_dim, 20,
+                             random_state=random_state, name="l1")
+    h = state[0]
+    c = state[1]
+    return output, h, c
 
-o = scan(step, [y_tm1], [None, init_att_h])
+o = scan(step, [y_tm1], [None, init_att_h, init_att_c])
 loss = tf.reduce_mean(o[0])
 from IPython import embed; embed(); raise ValueError()
-
 
 """
 o = scan(step,
