@@ -134,12 +134,13 @@ y = [yy.astype("float32") for yy in target]
 
 n_letters = len(iamondb["vocabulary"])
 random_state = np.random.RandomState(args.seed)
+iteration_seed = 42
 n_attention = 10
 cut_len = 256
 h_dim = 400
 n_batch = 64
 bias = 1.
-sample_type = "full"
+sample_type = "test"
 # "slow"
 # "test"
 
@@ -151,38 +152,48 @@ trace_mb, trace_mask, text_mb, text_mask = next(train_itr)
 train_itr.reset()
 """
 
-bg = BatchGenerator(64, 256, random_seed=42)
+bg = BatchGenerator(n_batch, cut_len, random_seed=iteration_seed)
 trace_mb, text_mb, reset, needed = bg.next_batch2()
 trace_mb = trace_mb.transpose(1, 0, 2)
-#text_mb = text_mb.transpose(1, 0, 2)
+text_mb = text_mb.transpose(1, 0, 2)
 
-idx = [iamondb["vocabulary"][ti] for ti in args.text]
-text_mb = np.zeros((len(idx), n_batch, n_letters))
-for n, idx_i in enumerate(idx):
-    text_mb[n, np.arange(n_batch), idx_i] = 1.
+if sample_type == "full":
+    idx = [iamondb["vocabulary"][ti] for ti in args.text]
+    text_mb = np.zeros((len(idx), n_batch, n_letters))
+    for n, idx_i in enumerate(idx):
+        text_mb[n, np.arange(n_batch), idx_i] = 1.
+elif sample_type == "test":
+    pass
+    # keep text_mb from training data
+else:
+    raise ValueError("Unknown sample type {}".format(sample_type))
 
-# real sample
 with tf.Session() as sess:
     saver = tf.train.import_meta_graph(args.model_path + '.meta')
     saver.restore(sess, args.model_path)
     graph = tf.get_default_graph()
     init_h1_np = np.zeros((n_batch, h_dim)).astype("float32")
+    init_c1_np = np.zeros((n_batch, h_dim)).astype("float32")
     init_h2_np = np.zeros((n_batch, h_dim)).astype("float32")
+    init_c2_np = np.zeros((n_batch, h_dim)).astype("float32")
     init_att_h_np = np.zeros((n_batch, h_dim)).astype("float32")
+    init_att_c_np = np.zeros((n_batch, h_dim)).astype("float32")
     init_att_k_np = np.zeros((n_batch, n_attention)).astype("float32")
     init_att_w_np = np.zeros((n_batch, n_letters)).astype("float32")
 
     everything = [n.name for n in tf.get_default_graph().as_graph_def().node]
 
     X_char = graph.get_tensor_by_name("X_char:0")
-    X_char_mask = graph.get_tensor_by_name("X_char_mask:0")
-    y_pen = graph.get_tensor_by_name("y_pen:0")
-    y_pen_mask = graph.get_tensor_by_name("y_pen_mask:0")
-    init_h1 = graph.get_tensor_by_name("init_h1:0")
-    init_h2 = graph.get_tensor_by_name("init_h2:0")
+    y_pen_tm1 = graph.get_tensor_by_name("y_pen_tm1:0")
+    y_pen_t = graph.get_tensor_by_name("y_pen_t:0")
     init_att_h = graph.get_tensor_by_name("init_att_h:0")
+    init_att_c = graph.get_tensor_by_name("init_att_c:0")
     init_att_k = graph.get_tensor_by_name("init_att_k:0")
     init_att_w = graph.get_tensor_by_name("init_att_w:0")
+    init_h1 = graph.get_tensor_by_name("init_h1:0")
+    init_c1 = graph.get_tensor_by_name("init_c1:0")
+    init_h2 = graph.get_tensor_by_name("init_h2:0")
+    init_c2 = graph.get_tensor_by_name("init_c2:0")
 
     logit_bernoullis = graph.get_tensor_by_name("b_gmm_logit_bernoulli_and_correlated_logit_gaussian_mixture_logit_bernoullis:0")
     logit_coeffs = graph.get_tensor_by_name("b_gmm_logit_bernoulli_and_correlated_logit_gaussian_mixture_logit_coeffs:0")
@@ -190,11 +201,15 @@ with tf.Session() as sess:
     logit_sigmas = graph.get_tensor_by_name("b_gmm_logit_bernoulli_and_correlated_logit_gaussian_mixture_logit_sigmas:0")
     corrs = graph.get_tensor_by_name("b_gmm_logit_bernoulli_and_correlated_logit_gaussian_mixture_corrs:0")
 
+    att_h = graph.get_tensor_by_name("att_h:0")
+    att_c = graph.get_tensor_by_name("att_c:0")
     att_k = graph.get_tensor_by_name("att_k:0")
     att_w = graph.get_tensor_by_name("att_w:0")
-    att_h = graph.get_tensor_by_name("att_h:0")
-    h1_o = graph.get_tensor_by_name("h1_o:0")
-    h2_o = graph.get_tensor_by_name("h2_o:0")
+    att_phi = graph.get_tensor_by_name("att_phi:0")
+    h1 = graph.get_tensor_by_name("h1:0")
+    c1 = graph.get_tensor_by_name("c1:0")
+    h2 = graph.get_tensor_by_name("h2:0")
+    c2 = graph.get_tensor_by_name("c2:0")
 
     cost_corrs = graph.get_tensor_by_name("cost_corrs:0")
     cost_sigmas = graph.get_tensor_by_name("cost_sigmas:0")
@@ -202,47 +217,54 @@ with tf.Session() as sess:
     cost_coeffs = graph.get_tensor_by_name("cost_coeffs:0")
     cost_mus = graph.get_tensor_by_name("cost_mus:0")
 
-    cur_buf = [np.copy(trace_mb[0]) for i in range(2)]
+    cur_buf = [np.copy(trace_mb[0])]
     all_res = [cur_buf[0]]
     all_att_h = [init_att_h_np,]
+    all_att_c = [init_att_c_np,]
     all_att_k = [init_att_k_np,]
     all_att_w = [init_att_w_np,]
+    all_att_phi = []
     all_h1 = [init_h1_np,]
+    all_c1 = [init_c1_np,]
     all_h2 = [init_h2_np,]
-    sample_len = 60 * 15
+    all_c2 = [init_c2_np,]
+    if sample_type == "full":
+        sample_len = 60 * len(text_mb)
+    elif sample_type == "test":
+        sample_len = len(trace_mb) - 1
+    else:
+        raise ValueError("Unknown sample_type {}".format(sample_type))
     monitor = 20
     for i in range(sample_len):
         if i == (sample_len - 1):
             print("Sampling step {}".format(i))
         elif i % monitor == 0:
             print("Sampling step {}".format(i))
-        this_trace_mb = np.array(cur_buf[:1])
-        this_trace_mask = 0. * this_trace_mb[:, :, 0] + 1.
+        this_trace_mb = np.array(cur_buf[0])[None]
         this_init_att_h = np.array(all_att_h[-1])
+        this_init_att_c = np.array(all_att_c[-1])
         this_init_att_k = np.array(all_att_k[-1])
         this_init_att_w = np.array(all_att_w[-1])
         this_init_h1 = np.array(all_h1[-1])
+        this_init_c1 = np.array(all_c1[-1])
         this_init_h2 = np.array(all_h2[-1])
+        this_init_c2 = np.array(all_c2[-1])
 
         feed = {X_char: text_mb,
-                X_char_mask: 0. * text_mb[:, :, 0] + 1.,
-                y_pen: this_trace_mb,
-                y_pen_mask: this_trace_mask,
+                y_pen_tm1: this_trace_mb,
                 init_h1: init_h1_np,
+                init_c1: init_c1_np,
                 init_h2: init_h2_np,
+                init_c2: init_c2_np,
                 init_att_h: init_att_h_np,
+                init_att_c: init_att_c_np,
                 init_att_k: init_att_k_np,
                 init_att_w: init_att_w_np}
 
         desired_outs = [cost_bernoullis, cost_coeffs, cost_mus, cost_sigmas, cost_corrs,
-                        att_h, att_k, att_w,
-                        h1_o, h2_o]
+                        att_h, att_c, att_k, att_w, att_phi,
+                        h1, c1, h2, c2]
 
-        """
-        desired_outs = [logit_bernoullis, logit_coeffs, mus, logit_sigmas, corrs,
-                        att_h, att_k, att_w,
-                        h1_o, h2_o]
-        """
         r_outs = sess.run(desired_outs, feed)
 
         """
@@ -267,12 +289,17 @@ with tf.Session() as sess:
         mus_np = r_outs[2]
         sigmas_np = r_outs[3]
         corrs_np = r_outs[4]
+
         att_h_np = r_outs[5]
-        att_k_np = r_outs[6]
-        att_w_np = r_outs[7]
-        h1_np = r_outs[8]
-        h2_np = r_outs[9]
-        from IPython import embed; embed(); raise ValueError()
+        att_c_np = r_outs[6]
+        att_k_np = r_outs[7]
+        att_w_np = r_outs[8]
+        att_phi_np = r_outs[9]
+
+        h1_np = r_outs[10]
+        c1_np = r_outs[11]
+        h2_np = r_outs[12]
+        c2_np = r_outs[13]
 
         this_res = []
         for choose in range(h1_np.shape[1]):
@@ -288,15 +315,25 @@ with tf.Session() as sess:
             #    random_state=random_state)
             this_res.append(res)
         # now 1, minibatch_size, 3
-        this_res = np.array(this_res).transpose(1, 0, 2)
-        this_mask = 0. * this_res[-1, :, 0] + 1.
+        this_res = np.array(this_res)
+        this_res = this_res.transpose(1, 0, 2)
         all_res.append(this_res[0])
-        all_att_h.append(att_h_np[0])# = [init_att_h_np,]
-        all_att_k.append(att_k_np[0])# = [init_att_h_np,]
-        all_att_w.append(att_w_np[0])# = [init_att_k_np,]
+        #all_res.append(trace_mb[i + 1])
+        all_att_h.append(att_h_np[0])
+        all_att_c.append(att_c_np[0])
+        all_att_k.append(att_k_np[0])
+        all_att_w.append(att_w_np[0])
+        all_att_phi.append(att_phi_np[0])
         all_h1.append(h1_np[0])
+        all_c1.append(c1_np[0])
         all_h2.append(h2_np[0])
-        cur_buf = [np.copy(this_res[0]) for i in range(2)]
+        all_c2.append(c2_np[0])
+        if sample_type == "full":
+            cur_buf = [np.copy(this_res[0])]
+        elif sample_type == "test":
+            cur_buf = [trace_mb[i + 1]]
+        else:
+            raise ValueError("Unknown sample_type {}".format(sample_type))
 
     import matplotlib
     matplotlib.use("Agg")
@@ -305,23 +342,26 @@ with tf.Session() as sess:
     sampled_res = np.array(all_res)
     final_att_k = np.array(all_att_k)
     final_att_w = np.array(all_att_w)
+    final_att_phi = np.array(all_att_phi)
 
     choose = 0
 
     f, axarr = plt.subplots(2, 1)
-    strokes = sampled_res[:, choose]
+    dstrokes = sampled_res[:, choose]
     final_att_k_i = final_att_k[:, choose]
     final_att_w_i = final_att_w[:, choose]
+    final_att_phi_i = final_att_phi[:, choose]
 
-    strokes[:, 1:] = np.cumsum(strokes[:, 1:], axis=0)
+    strokes = np.zeros_like(dstrokes)
+    strokes[:, 0] = dstrokes[:, 0]
+    strokes[:, 1:] = np.cumsum(dstrokes[:, 1:], axis=0)
     minx, maxx = np.min(strokes[:, 1]), np.max(strokes[:, 1])
     miny, maxy = np.min(strokes[:, 2]), np.max(strokes[:, 2])
     split = split_strokes(strokes)
-    from IPython import embed; embed(); raise ValueError()
     for sp in split:
         axarr[0].plot(sp[:, 0], -sp[:, 1])
     #axarr[1].imshow(final_att_w_i.T)
-    axarr[1].plot(final_att_k_i.mean(axis=-1))
+    axarr[1].imshow(final_att_phi_i.T)
     plt.savefig("gen_plot.png".format(choose))
     plt.clf()
     plt.close()

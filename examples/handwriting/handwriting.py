@@ -71,7 +71,7 @@ y = [yy.astype("float32") for yy in target]
 n_letters = len(iamondb["vocabulary"])
 random_state = np.random.RandomState(1999)
 iteration_seed = 42
-n_epochs = 8
+n_epochs = 30
 n_attention = 10
 n_mdn = 20
 h_dim = 400
@@ -176,13 +176,13 @@ att_phi = o[9]
 
 att_h = tf.identity(att_h, name="att_h")
 att_c = tf.identity(att_c, name="att_c")
+att_k = tf.identity(att_k, name="att_k")
+att_w = tf.identity(att_w, name="att_w")
+att_phi = tf.identity(att_phi, name="att_phi")
 h1 = tf.identity(h1, name="h1")
 c1 = tf.identity(c1, name="c1")
 h2 = tf.identity(h2, name="h2")
 c2 = tf.identity(c2, name="c2")
-att_w = tf.identity(att_w, name="att_w")
-att_k = tf.identity(att_k, name="att_k")
-att_phi = tf.identity(att_phi, name="att_phi")
 
 p = LogitBernoulliAndCorrelatedLogitGMM([sout],
                                         [h_dim],
@@ -202,6 +202,7 @@ cost = LogitBernoulliAndCorrelatedLogitGMMCost(
 #loss = tf.reduce_mean(masked_cost)
 #loss = tf.reduce_sum(masked_cost / (tf.reduce_sum(y_mask_t) + 1E-6))
 loss = tf.reduce_mean(cost)
+loss = tf.identity(loss, name="loss")
 
 params_dict = get_params_dict()
 params = params_dict.values()
@@ -288,39 +289,44 @@ def loop(bgitr, sess, inits, extras):
             init_att_k: init_att_k_np,
             init_att_w: init_att_w_np}
 
-    outs = [loss, summary, updates,
-            h1, c1,
-            h2, c2,
-            att_h, att_c,
-            att_k, att_w]
-    p = sess.run(outs, feed)
-    train_loss = p[0]
-    train_summary = p[1]
-    _ = p[2]
-    h1_np = p[3]
-    c1_np = p[4]
-    h2_np = p[5]
-    c2_np = p[6]
-    att_h_np = p[7]
-    att_c_np = p[8]
-    att_k_np = p[9]
-    att_w_np = p[10]
-    lasts = [h1_np[-1],
-             c1_np[-1],
-             h2_np[-1],
-             c2_np[-1],
-             att_h_np[-1],
-             att_c_np[-1],
-             att_k_np[-1],
-             att_w_np[-1]]
+    if extras["train"]:
+        outs = [loss, summary, updates,
+                h1, c1,
+                h2, c2,
+                att_h, att_c,
+                att_k, att_w]
+        p = sess.run(outs, feed)
+        train_loss = p[0]
+        train_summary = p[1]
+        _ = p[2]
+        h1_np = p[3]
+        c1_np = p[4]
+        h2_np = p[5]
+        c2_np = p[6]
+        att_h_np = p[7]
+        att_c_np = p[8]
+        att_k_np = p[9]
+        att_w_np = p[10]
+        lasts = [h1_np[-1],
+                 c1_np[-1],
+                 h2_np[-1],
+                 c2_np[-1],
+                 att_h_np[-1],
+                 att_c_np[-1],
+                 att_k_np[-1],
+                 att_w_np[-1]]
+    else:
+        outs = [loss]
+        p = sess.run(outs, feed)
+        train_loss = p[0]
+        train_summary = None
+        lasts = []
     return [train_loss, train_summary, lasts]
 
-sess = tf.Session()
-
-with sess.as_default():
+sess1 = tf.Session()
+with sess1.as_default() as sess:
     tf.global_variables_initializer().run()
     print_network(get_params_dict())
-    av = tf.global_variables()
     model_saver = tf.train.Saver(max_to_keep=2)
     experiment_path = next_experiment_path()
     print("Using experiment path {}".format(experiment_path))
@@ -368,3 +374,36 @@ with sess.as_default():
             model_saver.save(sess, os.path.join(experiment_path, 'models', 'model'), global_step=e)
             e += 1
         print('\r[{:5d}/{:5d}] loss = {}'.format(bi % 1000, 1000, train_loss), end="")
+
+    # save the very last one...
+    model_saver.save(sess, os.path.join(experiment_path, 'models', 'model'), global_step=e)
+    e += 1
+
+    init_h1_np = np.zeros((n_batch, h_dim)).astype("float32")
+    init_c1_np = np.zeros((n_batch, h_dim)).astype("float32")
+    init_h2_np = np.zeros((n_batch, h_dim)).astype("float32")
+    init_c2_np = np.zeros((n_batch, h_dim)).astype("float32")
+    init_att_h_np = np.zeros((n_batch, h_dim)).astype("float32")
+    init_att_c_np = np.zeros((n_batch, h_dim)).astype("float32")
+    init_att_k_np = np.zeros((n_batch, n_attention)).astype("float32")
+    init_att_w_np = np.zeros((n_batch, n_letters)).astype("float32")
+
+    inits = [init_h1_np,
+             init_c1_np,
+             init_h2_np,
+             init_c2_np,
+             init_att_h_np,
+             init_att_c_np,
+             init_att_k_np, init_att_w_np]
+
+    print("")
+    bg = BatchGenerator(n_batch, cut_len, random_seed=iteration_seed)
+    for i in range(10):
+        ret = loop(bg, sess, inits, {"train": False})
+        print(ret[0])
+
+    print("")
+    bg = BatchGenerator(n_batch, cut_len, random_seed=iteration_seed)
+    for i in range(10):
+        ret = loop(bg, sess, inits, {"train": False})
+        print(ret[0])
