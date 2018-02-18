@@ -41,6 +41,8 @@ target = iamondb["target"]
 
 from tfdllib import LSTMCell
 from tfdllib import get_params_dict
+from tfdllib import BernoulliAndCorrelatedGMMCost
+from tfdllib import shape
 
 class WindowLayer(object):
     def __init__(self, num_mixtures, sequence, num_letters):
@@ -213,13 +215,24 @@ def create_graph(num_letters, batch_size,
 
                 with tf.control_dependencies([sp.assign(sc) for sp, sc in zip(rnn_model.states, states)]):
                     with tf.name_scope('prediction'):
+                        shp = shape(outs[0])
                         outs = tf.reshape(outs, [-1, num_units])
                         e, pi, mu1, mu2, std1, std2, rho = output_layer(outs, bias)
 
                     with tf.name_scope('loss'):
                         coords = tf.reshape(out_coords, [-1, 3])
                         xs, ys, es = tf.unstack(tf.expand_dims(coords, axis=2), axis=1)
+                        cc = BernoulliAndCorrelatedGMMCost(e, pi,
+                                                           [mu1, mu2],
+                                                           [std1, std2],
+                                                           rho,
+                                                           es,
+                                                           [xs, ys],
+                                                           #coords[:, :1],
+                                                           #[coords[:, 1:2], coords[:, 2:]],
+                                                           name="cost")
 
+                        """
                         mrho = 1 - tf.square(rho) + 1E-6
                         xms = (xs - mu1) / std1
                         yms = (ys - mu2) / std2
@@ -229,6 +242,8 @@ def create_graph(num_letters, batch_size,
                         rp = tf.reduce_sum(pi * n, axis=1)
 
                         loss = tf.reduce_mean(-tf.log(rp + epsilon) - tf.log(ep + epsilon))
+                        """
+                        loss = tf.reduce_mean(cc)
 
                     if generate:
                         # save params for easier model loading and prediction
