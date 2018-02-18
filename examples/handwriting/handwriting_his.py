@@ -5,6 +5,7 @@ import numpy as np
 import tensorflow as tf
 from collections import namedtuple
 
+from extras import fetch_iamondb, rsync_fetch
 from utils import next_experiment_path
 from batch_generator import BatchGenerator
 
@@ -24,6 +25,22 @@ args = parser.parse_args()
 
 epsilon = 1e-8
 
+iteration_seed = 42
+h_dim = args.units
+cut_len = args.seq_len
+n_batch = args.batch_size
+n_mdn = args.output_mixtures
+n_attention = args.window_mixtures
+random_state = np.random.RandomState(1999)
+
+iamondb = rsync_fetch(fetch_iamondb, "leto01")
+n_letters = len(iamondb["vocabulary"])
+data = iamondb["data"]
+target = iamondb["target"]
+
+
+from tfdllib import LSTMCell
+from tfdllib import get_params_dict
 
 class WindowLayer(object):
     def __init__(self, num_mixtures, sequence, num_letters):
@@ -106,6 +123,9 @@ class RNNModel(tf.nn.rnn_cell.RNNCell):
         with tf.variable_scope('rnn', reuse=None):
             self.lstms = [tf.nn.rnn_cell.LSTMCell(num_units)
                           for _ in range(layers)]
+
+            self.my_lstms = [LSTMCell for _ in range(layers)]
+
             self.states = [tf.Variable(tf.zeros([batch_size, s]), trainable=False)
                            for s in self.state_size]
 
@@ -134,10 +154,19 @@ class RNNModel(tf.nn.rnn_cell.RNNCell):
         for layer in range(self.layers):
             #noisy_inputs = tf.random_normal(shape=[args.batch_size, 3]) + inputs
             #x = tf.concat([noisy_inputs, window] + prev_output, axis=1)
+            #x = tf.concat([inputs, window] + prev_output, axis=1)
             x = tf.concat([inputs, window] + prev_output, axis=1)
             with tf.variable_scope('lstm_{}'.format(layer)):
-                output, s = self.lstms[layer](x, tf.nn.rnn_cell.LSTMStateTuple(state[2 * layer],
-                                                                               state[2 * layer + 1]))
+                sz = [3 + n_letters + h_dim] if len(prev_output) != 0 else [3 + n_letters]
+                output, s = self.my_lstms[layer]([x], sz,
+                                                 state[2 * layer],
+                                                 state[2 * layer + 1],
+                                                 h_dim,
+                                                 random_state=random_state,
+                                                 name="h_{}".format(layer))
+                s = tf.nn.rnn_cell.LSTMStateTuple(s[0], s[1])
+                #output1, s1 = self.lstms[layer](x, tf.nn.rnn_cell.LSTMStateTuple(state[2 * layer],
+                #                                                                 state[2 * layer + 1]))
                 prev_output = [output]
             output_state += [si for si in s]
 
