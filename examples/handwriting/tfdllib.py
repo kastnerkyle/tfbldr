@@ -530,10 +530,12 @@ def LSTMCell(list_of_inputs, list_of_input_dims,
     def _slice(arr, i):
         return arr[..., i * num_units:(i + 1) * num_units]
 
-    i_ = tf.nn.sigmoid(_slice(inp_to_pre, 0) + _slice(h_to_hpre, 0))
-    f_ = tf.nn.sigmoid(_slice(inp_to_pre, 1) + _slice(h_to_hpre, 1))
-    o_ = tf.nn.sigmoid(_slice(inp_to_pre, 2) + _slice(h_to_hpre, 2))
-    g_ = tf.nn.tanh(_slice(inp_to_pre, 3) + _slice(h_to_hpre, 3))
+    pre = inp_to_pre + h_to_hpre
+
+    i_ = tf.nn.sigmoid(_slice(pre, 0))
+    f_ = tf.nn.sigmoid(_slice(pre, 1))
+    o_ = tf.nn.sigmoid(_slice(pre, 2))
+    g_ = tf.nn.tanh(_slice(pre, 3))
     c = previous_cell * f_ + g_ * i_
     h = tf.nn.tanh(c) * o_
 
