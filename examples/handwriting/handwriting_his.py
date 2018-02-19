@@ -40,11 +40,12 @@ target = iamondb["target"]
 
 
 from tfdllib import LSTMCell
+from tfdllib import Linear
 from tfdllib import get_params_dict
 from tfdllib import BernoulliAndCorrelatedGMMCost
 from tfdllib import shape
 
-class WindowLayer(object):
+class MyWindowLayer(object):
     def __init__(self, num_mixtures, sequence, num_letters):
         self.sequence = sequence  # one-hot encoded sequence of characters -- [batch_size, length, num_letters]
         self.seq_len = tf.shape(sequence)[1]
@@ -55,12 +56,21 @@ class WindowLayer(object):
 
     def __call__(self, inputs, k, reuse=None):
         with tf.variable_scope('window', reuse=reuse):
-            alpha = tf.layers.dense(inputs, self.num_mixtures, activation=tf.exp,
-                                    kernel_initializer=tf.truncated_normal_initializer(stddev=0.075), name='alpha')
-            beta = tf.layers.dense(inputs, self.num_mixtures, activation=tf.exp,
-                                   kernel_initializer=tf.truncated_normal_initializer(stddev=0.075), name='beta')
-            kappa = tf.layers.dense(inputs, self.num_mixtures, activation=tf.exp,
-                                    kernel_initializer=tf.truncated_normal_initializer(stddev=0.075), name='kappa')
+            alpha = Linear([inputs], [h_dim], self.num_mixtures,
+                           random_state=random_state,
+                           name="window_alpha",
+                           init="truncated_normal")
+            alpha = tf.exp(alpha)
+            beta = Linear([inputs], [h_dim], self.num_mixtures,
+                           random_state=random_state,
+                           name="window_beta",
+                           init="truncated_normal")
+            beta = tf.exp(beta)
+            kappa = Linear([inputs], [h_dim], self.num_mixtures,
+                           random_state=random_state,
+                           name="window_kappa",
+                           init="truncated_normal")
+            kappa = tf.exp(kappa)
 
             a = tf.expand_dims(alpha, axis=2)
             b = tf.expand_dims(beta, axis=2)
@@ -81,8 +91,7 @@ class WindowLayer(object):
     def output_size(self):
         return [self.num_letters, self.num_mixtures, 1]
 
-
-class MixtureLayer(object):
+class MyMixtureLayer(object):
     def __init__(self, input_size, output_size, num_mixtures):
         self.input_size = input_size
         self.output_size = output_size
@@ -90,20 +99,34 @@ class MixtureLayer(object):
 
     def __call__(self, inputs, bias=0., reuse=None):
         with tf.variable_scope('mixture_output', reuse=reuse):
-            e = tf.layers.dense(inputs, 1,
-                                kernel_initializer=tf.truncated_normal_initializer(stddev=0.075), name='e')
-            pi = tf.layers.dense(inputs, self.num_mixtures,
-                                 kernel_initializer=tf.truncated_normal_initializer(stddev=0.075), name='pi')
-            mu1 = tf.layers.dense(inputs, self.num_mixtures,
-                                  kernel_initializer=tf.truncated_normal_initializer(stddev=0.075), name='mu1')
-            mu2 = tf.layers.dense(inputs, self.num_mixtures,
-                                  kernel_initializer=tf.truncated_normal_initializer(stddev=0.075), name='mu2')
-            std1 = tf.layers.dense(inputs, self.num_mixtures,
-                                   kernel_initializer=tf.truncated_normal_initializer(stddev=0.075), name='std1')
-            std2 = tf.layers.dense(inputs, self.num_mixtures,
-                                   kernel_initializer=tf.truncated_normal_initializer(stddev=0.075), name='std2')
-            rho = tf.layers.dense(inputs, self.num_mixtures,
-                                  kernel_initializer=tf.truncated_normal_initializer(stddev=0.075), name='rho')
+            e = Linear([inputs], [h_dim], 1,
+                       random_state=random_state,
+                       name="mixture_e",
+                       init="truncated_normal")
+            pi = Linear([inputs], [h_dim], self.num_mixtures,
+                        random_state=random_state,
+                        name="mixture_pi",
+                        init="truncated_normal")
+            mu1 = Linear([inputs], [h_dim], self.num_mixtures,
+                         random_state=random_state,
+                         name="mixture_mu1",
+                         init="truncated_normal")
+            mu2 = Linear([inputs], [h_dim], self.num_mixtures,
+                         random_state=random_state,
+                         name="mixture_mu2",
+                         init="truncated_normal")
+            std1 = Linear([inputs], [h_dim], self.num_mixtures,
+                          random_state=random_state,
+                          name="mixture_std1",
+                          init="truncated_normal")
+            std2 = Linear([inputs], [h_dim], self.num_mixtures,
+                          random_state=random_state,
+                          name="mixture_std2",
+                          init="truncated_normal")
+            rho = Linear([inputs], [h_dim], self.num_mixtures,
+                         random_state=random_state,
+                         name="mixture_rho",
+                         init="truncated_normal")
 
             return tf.nn.sigmoid(e), \
                    tf.nn.softmax(pi * (1. + bias)), \
@@ -165,7 +188,8 @@ class RNNModel(tf.nn.rnn_cell.RNNCell):
                                                  state[2 * layer + 1],
                                                  h_dim,
                                                  random_state=random_state,
-                                                 name="h_{}".format(layer))
+                                                 name="h_{}".format(layer),
+                                                 init="truncated_normal")
                 s = tf.nn.rnn_cell.LSTMStateTuple(s[0], s[1])
                 #output1, s1 = self.lstms[layer](x, tf.nn.rnn_cell.LSTMStateTuple(state[2 * layer],
                 #                                                                 state[2 * layer + 1]))
@@ -198,7 +222,7 @@ def create_graph(num_letters, batch_size,
                 in_coords = coordinates
 
             with tf.variable_scope('model', reuse=generate):
-                window = WindowLayer(num_mixtures=window_mixtures, sequence=sequence, num_letters=num_letters)
+                window = MyWindowLayer(num_mixtures=window_mixtures, sequence=sequence, num_letters=num_letters)
 
                 rnn_model = RNNModel(layers=lstm_layers, num_units=num_units,
                                      input_size=3, num_letters=num_letters,
@@ -210,8 +234,8 @@ def create_graph(num_letters, batch_size,
                 outs, states = tf.nn.dynamic_rnn(rnn_model, in_coords,
                                                  initial_state=rnn_model.states)
 
-                output_layer = MixtureLayer(input_size=num_units, output_size=2,
-                                            num_mixtures=output_mixtures)
+                output_layer = MyMixtureLayer(input_size=num_units, output_size=2,
+                                              num_mixtures=output_mixtures)
 
                 with tf.control_dependencies([sp.assign(sc) for sp, sc in zip(rnn_model.states, states)]):
                     with tf.name_scope('prediction'):
@@ -314,7 +338,9 @@ def main():
             sess.run(tf.global_variables_initializer())
             experiment_path = next_experiment_path()
             epoch = 0
-
+        print(" ")
+        print("Using experiment path {}".format(experiment_path))
+        print(" ")
         summary_writer = tf.summary.FileWriter(experiment_path, graph=g, flush_secs=10)
         summary_writer.add_session_log(tf.SessionLog(status=tf.SessionLog.START),
                                        global_step=epoch * batches_per_epoch)

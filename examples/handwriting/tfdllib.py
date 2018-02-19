@@ -342,6 +342,11 @@ def make_numpy_weights(in_dim, out_dims, random_state, init=None,
             else:
                 ff[i] = np_variance_scaled_uniform
                 fs[i] = 1.
+        elif init == "ortho":
+            if in_dim != out_dim:
+                raise ValueError("Unable to use ortho init for non-square matrices!")
+            ff[i] = np_ortho
+            fs[i] = 1.
         elif init == "glorot_uniform":
             ff[i] = np_glorot_uniform
         elif init == "normal":
@@ -417,10 +422,12 @@ def Linear(list_of_inputs, list_of_input_dims, output_dim, random_state,
     input_var = tf.concat(list_of_inputs, axis=nd - 1)
     input_dim = sum(list_of_input_dims)
     if init is None or type(init) is str:
+        logger.info("Linear layer {} initialized using init {}".format(name, init))
         weight_values, = make_numpy_weights(input_dim, [output_dim],
                                             random_state=random_state,
                                             init=init, scale=scale)
     else:
+        # rely on announcement from parent class
         weight_values=init[0]
 
     if name is None:
@@ -502,7 +509,11 @@ def LSTMCell(list_of_inputs, list_of_input_dims,
     input_dim = sum(list_of_input_dims)
     hidden_dim = 4 * num_units
 
-    if init is None or init == "glorot_uniform":
+    if init is None or init == "truncated_normal":
+        inp_init = "truncated_normal"
+        h_init = "truncated_normal"
+        out_init = "truncated_normal"
+    elif init == "glorot_uniform":
         inp_init = "glorot_uniform"
         h_init = "glorot_uniform"
         out_init = "glorot_uniform"
@@ -519,9 +530,20 @@ def LSTMCell(list_of_inputs, list_of_input_dims,
                         random_state=random_state,
                         name=name + "_lstm_inp_to_pre",
                         init=(inp_to_pre_w_np, inp_to_pre_b_np), strict=strict)
-    h_to_hpre_w_np, = make_numpy_weights(num_units, [hidden_dim],
-                                         random_state=random_state,
-                                         init=h_init)
+    logger.info("LSTMCell {} input to hidden initialized using init {}".format(name, inp_init))
+
+    if h_init == "ortho":
+        h_to_hpre_w_np_list = make_numpy_weights(num_units,
+                                                 [num_units, num_units, num_units, num_units],
+                                                 random_state=random_state,
+                                                 init=h_init)
+        h_to_hpre_w_np = np.concatenate(h_to_hpre_w_np_list, axis=-1)
+    else:
+        h_to_hpre_w_np, = make_numpy_weights(num_units, [hidden_dim],
+                                             random_state=random_state,
+                                             init=h_init)
+    logger.info("LSTMCell {} hidden to hidden initialized using init {}".format(name, h_init))
+
     h_to_hpre = Linear([previous_hidden], [num_units], hidden_dim,
                        random_state=random_state,
                        name=name + "_lstm_h_to_hpre",
@@ -530,12 +552,20 @@ def LSTMCell(list_of_inputs, list_of_input_dims,
     def _slice(arr, i):
         return arr[..., i * num_units:(i + 1) * num_units]
 
+    # local slice is better????
+    i_ = tf.nn.sigmoid(_slice(inp_to_pre, 0) + _slice(h_to_hpre, 0))
+    f_ = tf.nn.sigmoid(_slice(inp_to_pre, 1) + _slice(h_to_hpre, 1))
+    o_ = tf.nn.sigmoid(_slice(inp_to_pre, 2) + _slice(h_to_hpre, 2))
+    g_ = tf.nn.tanh(_slice(inp_to_pre, 3) + _slice(h_to_hpre, 3))
+
+    """
     pre = inp_to_pre + h_to_hpre
 
     i_ = tf.nn.sigmoid(_slice(pre, 0))
     f_ = tf.nn.sigmoid(_slice(pre, 1))
     o_ = tf.nn.sigmoid(_slice(pre, 2))
     g_ = tf.nn.tanh(_slice(pre, 3))
+    """
     c = previous_cell * f_ + g_ * i_
     h = tf.nn.tanh(c) * o_
 
@@ -548,6 +578,7 @@ def LSTMCell(list_of_inputs, list_of_input_dims,
                           name=name + "_lstm_h_to_out",
                           init=(h_to_out_w_np, h_to_out_b_np), strict=strict)
         final_out = h_to_out
+        logger.info("LSTMCell {} hidden to output initialized using init {}".format(name, out_init))
     else:
         final_out = h
     return final_out, (h, c)
