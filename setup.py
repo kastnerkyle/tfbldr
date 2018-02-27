@@ -17,7 +17,7 @@ setuptools.setup(
     },
     install_requires=['numpy',
                       'scipy',
-                      'tensorflow'],
+                      'tensorflow-gpu'],
     classifiers=['Development Status :: 3 - Alpha',
                  'Intended Audience :: Science/Research',
                  'License :: OSI Approved :: BSD License',
