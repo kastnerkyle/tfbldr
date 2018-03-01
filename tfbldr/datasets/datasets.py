@@ -550,7 +550,7 @@ class tbptt_list_iterator(object):
         # whether the result is "fresh" or continuation
         reset_states = np.ones((self.batch_size, 1), dtype=np.float32)
         for i in range(self.batch_size):
-            # cuts off the end of every sequence! tricky logic
+            # cuts off the end of every long sequence! tricky logic
             if self.batches_[i] + self.truncation_length + 1 > self.tbptt_seqs[self.indices_[i]].shape[0]:
                 ni = self.random_state.randint(0, self.tbptt_seqs_length_ - 1)
                 self.indices_[i] = ni
@@ -578,7 +578,8 @@ class tbptt_list_iterator(object):
                       for ni, other_arr in enumerate(other_items)]
         for i in range(self.batch_size):
             ns = truncation_items[i][self.batches_[i]:self.batches_[i] + self.truncation_length + 1]
-            tbptt_arr[:, i, :] = ns
+            # need this for short sequences, long sequences handled by start check
+            tbptt_arr[:len(ns), i, :] = ns
             for na, oa in enumerate(other_arrs):
                 oa[:len(other_items[na][i]), i, :] = other_items[na][i]
             self.batches_[i] += self.truncation_length

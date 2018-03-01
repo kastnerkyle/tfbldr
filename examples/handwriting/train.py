@@ -43,9 +43,8 @@ vocabulary_size = len(iamondb["vocabulary"])
 itr = tbptt_list_iterator(trace_data, [char_data], batch_size, truncation_len,
                           other_one_hot_size=[vocabulary_size],
                           random_state=itr_random_state)
-r = itr.next_batch()
-rm = itr.next_masked_batch()
-from IPython import embed; embed(); raise ValueError()
+#r = itr.next_batch()
+#rm = itr.next_masked_batch()
 
 epsilon = 1e-8
 
@@ -357,7 +356,8 @@ def main():
         for e in range(epoch, num_epoch):
             logger.info("Epoch {}".format(e))
             for b in range(1, batches_per_epoch + 1):
-                coords, coords_mask, seq, seq_mask, reset = batch_generator.next_batch2()
+                #coords, coords_mask, seq, seq_mask, reset = batch_generator.next_batch2()
+                coords, coords_mask, seq, seq_mask, reset = itr.next_masked_batch()
 
                 att_w_init *= reset
                 att_k_init *= reset
