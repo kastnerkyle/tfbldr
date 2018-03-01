@@ -17,6 +17,9 @@ from functools import wraps
 import exceptions
 import subprocess
 import shutil
+import xml
+import xml.etree.cElementTree as ElementTree
+import HTMLParser
 
 
 def copytree(src, dst, symlinks=False, ignore=None):
@@ -328,6 +331,9 @@ def iamondb_extract(partial_path):
     file_no = 0
     pth = os.path.join(partial_path, "original")
     for root, dirs, files in os.walk(pth):
+        # sort the dirs to iterate the same way every time
+        # https://stackoverflow.com/questions/18282370/os-walk-iterates-in-what-order
+        dirs.sort()
         for file in files:
             file_name, extension = os.path.splitext(file)
             if extension == '.xml':
@@ -392,6 +398,7 @@ def iamondb_extract(partial_path):
             labels += [translate(text)]
 
     whole_data = np.concatenate(dataset, axis=0)
+
     std_y = np.std(whole_data[:, 1])
     norm_data = []
     for line in dataset:
@@ -424,6 +431,7 @@ def fetch_iamondb():
         tar.close()
 
     saved_dataset_path = os.path.join(partial_path, 'preprocessed_data')
+
     if not os.path.exists(saved_dataset_path):
         iamondb_extract(partial_path)
 
@@ -433,6 +441,7 @@ def fetch_iamondb():
 
     dataset = np.load(dataset_path)
     dataset = [np.array(d) for d in dataset]
+
     temp = []
     for d in dataset:
         # dataset stores actual pen points, but we will train on differences between consecutive points
@@ -456,5 +465,133 @@ def fetch_iamondb():
     inverse_translation = {v: k for k, v in translation.items()}
     dataset_storage["target_phrases"] = ["".join([inverse_translation[ci] for ci in labels[i]]) for i in range(len(labels))]
     dataset_storage["vocabulary_size"] = len(translation)
-    dataset_storage["vocabulary"] = sorted(translation.keys())
+    dataset_storage["vocabulary"] = translation
     return dataset_storage
+
+
+class tbptt_list_iterator(object):
+    def __init__(self, tbptt_seqs, list_of_other_seqs, batch_size,
+                 truncation_length,
+                 tbptt_one_hot_size=None, other_one_hot_size=None,
+                 random_state=None):
+        """
+        tbptt_one_hot_size
+        should be either None, or the one hot size desired
+
+        other_one_hot_size
+        should either be None (if not doing one-hot) or a list the same length
+        as the respective argument with integer one hot size, or None
+        for no one_hot transformation, example:
+
+        list_of_other_seqs = [my_char_data, my_vector_data]
+        other_one_hot_size = [127, None]
+        """
+        self.tbptt_seqs = tbptt_seqs
+        self.list_of_other_seqs = list_of_other_seqs
+        self.batch_size = batch_size
+        self.truncation_length = truncation_length
+
+        self.random_state = random_state
+        if random_state is None:
+            raise ValueError("Must pass random state for random selection")
+
+        self.tbptt_one_hot_size = tbptt_one_hot_size
+
+        self.other_one_hot_size = other_one_hot_size
+        if other_one_hot_size is not None:
+            assert len(other_one_hot_size) == len(list_of_other_seqs)
+
+        tbptt_seqs_length = [n for n, i in enumerate(tbptt_seqs)][-1] + 1
+        self.tbptt_seqs_length_ = tbptt_seqs_length
+
+        other_seqs_lengths = []
+        for other_seqs in list_of_other_seqs:
+            r = [n for n, i in enumerate(other_seqs)]
+            l = r[-1] + 1
+            other_seqs_lengths.append(l)
+        self.other_seqs_lengths_ = other_seqs_lengths
+
+        other_seqs_max_lengths = []
+        for other_seqs in list_of_other_seqs:
+            max_l = -1
+            for os in other_seqs:
+                max_l = len(os) if len(os) > max_l else max_l
+            other_seqs_max_lengths.append(max_l)
+        self.other_seqs_max_lengths_ = other_seqs_max_lengths
+
+        # make sure all sequences have the same number of elements
+        base = self.tbptt_seqs_length_
+        for sl in self.other_seqs_lengths_:
+            assert sl == base
+
+        # set up the matrices to slice one_hot indexes out of
+        # todo: setup slice functions? or just keep handling in next_batch
+        if tbptt_one_hot_size is None:
+            self._tbptt_oh_slicer = None
+        else:
+            self._tbptt_oh_slicer = np.eye(tbptt_one_hot_size)
+
+        if other_one_hot_size is None:
+            self._other_oh_slicers = [None] * len(other_seq_lengths)
+        else:
+            self._other_oh_slicers = []
+            for ooh in other_one_hot_size:
+                if ooh is None:
+                    self._other_oh_slicers.append(None)
+                else:
+                    self._other_oh_slicers.append(np.eye(ooh, dtype=np.float32))
+        # set up the indices selected for the first batch
+        self.indices_ = self.random_state.choice(self.tbptt_seqs_length_,
+                                                 size=(batch_size,), replace=False)
+        # set up the batch offset indicators for tracking where we are
+        self.batches_ = np.zeros((batch_size,), dtype=np.int32)
+
+    def next_batch(self):
+        # whether the result is "fresh" or continuation
+        reset_states = np.ones((self.batch_size, 1), dtype=np.float32)
+        for i in range(self.batch_size):
+            # cuts off the end of every sequence! tricky logic
+            if self.batches_[i] + self.truncation_length + 1 > self.tbptt_seqs[self.indices_[i]].shape[0]:
+                ni = self.random_state.randint(0, self.tbptt_seqs_length_ - 1)
+                self.indices_[i] = ni
+                self.batches_[i] = 0
+                reset_states[i] = 0.
+
+        # could slice before one hot to be slightly more efficient but eh
+        items = [self.tbptt_seqs[ii] for ii in self.indices_]
+        if self._tbptt_oh_slicer is None:
+            truncation_items = items
+        else:
+            truncation_items = [self._tbptt_oh_slicer[ai] for ai in items]
+
+        other_items = []
+        for oi in range(len(self.list_of_other_seqs)):
+            items = [self.list_of_other_seqs[oi][ii] for ii in self.indices_]
+            if self._other_oh_slicers[oi] is None:
+                other_items.append(items)
+            else:
+                other_items.append([self._other_oh_slicers[oi][ai] for ai in items])
+
+        # make storage
+        tbptt_arr = np.zeros((self.truncation_length + 1, self.batch_size, truncation_items[0].shape[-1]), dtype=np.float32)
+        other_arrs = [np.zeros((self.other_seqs_max_lengths_[ni], self.batch_size, other_arr[0].shape[-1]), dtype=np.float32)
+                      for ni, other_arr in enumerate(other_items)]
+        for i in range(self.batch_size):
+            ns = truncation_items[i][self.batches_[i]:self.batches_[i] + self.truncation_length + 1]
+            tbptt_arr[:, i, :] = ns
+            for na, oa in enumerate(other_arrs):
+                oa[:len(other_items[na][i]), i, :] = other_items[na][i]
+            self.batches_[i] += self.truncation_length
+        return [tbptt_arr,] + other_arrs + [reset_states,]
+
+    def next_masked_batch(self):
+        r = self.next_batch()
+        # reset is the last element
+        end_result = []
+        for ri in r[:-1]:
+            ri_mask = make_mask(ri)
+            end_result.append(ri)
+            end_result.append(ri_mask)
+        end_result.append(r[-1])
+        return end_result
+

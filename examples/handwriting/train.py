@@ -7,7 +7,9 @@ from collections import namedtuple
 
 import logging
 import shutil
-from tfbldr.datasets import BatchGenerator, rsync_fetch, fetch_iamondb
+from tfbldr.datasets import rsync_fetch, fetch_iamondb
+from tfbldr.datasets import tbptt_list_iterator, BatchGenerator
+#from batch_generator import BatchGenerator
 from tfbldr.utils import next_experiment_path
 from tfbldr import get_logger
 from tfbldr.nodes import Linear
@@ -18,7 +20,6 @@ from tfbldr.nodes import BernoulliAndCorrelatedGMM
 from tfbldr.nodes import BernoulliAndCorrelatedGMMCost
 from tfbldr import scan
 
-iamondb = rsync_fetch(fetch_iamondb, "leto01")
 tf.set_random_seed(2899)
 # TODO: add help info
 parser = argparse.ArgumentParser()
@@ -31,6 +32,20 @@ parser.add_argument('--lstm_layers', dest='lstm_layers', default=3, type=int)
 parser.add_argument('--units_per_layer', dest='units', default=400, type=int)
 parser.add_argument('--restore', dest='restore', default=None, type=str)
 args = parser.parse_args()
+
+iamondb = rsync_fetch(fetch_iamondb, "leto01")
+itr_random_state = np.random.RandomState(2177)
+trace_data = iamondb["data"]
+char_data = iamondb["target"]
+batch_size = args.batch_size
+truncation_len = args.seq_len
+vocabulary_size = len(iamondb["vocabulary"])
+itr = tbptt_list_iterator(trace_data, [char_data], batch_size, truncation_len,
+                          other_one_hot_size=[vocabulary_size],
+                          random_state=itr_random_state)
+r = itr.next_batch()
+rm = itr.next_masked_batch()
+from IPython import embed; embed(); raise ValueError()
 
 epsilon = 1e-8
 
@@ -277,6 +292,7 @@ def main():
     batches_per_epoch = 1000
 
     batch_generator = BatchGenerator(batch_size, seq_len, 2177)
+
     g, vs = create_graph(batch_generator.num_letters, batch_size,
                          num_units=args.units, lstm_layers=args.lstm_layers,
                          window_mixtures=args.window_mixtures,

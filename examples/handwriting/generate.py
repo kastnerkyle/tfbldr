@@ -13,21 +13,24 @@ from matplotlib import animation
 #import seaborn
 from collections import namedtuple
 import time
+from tfbldr.datasets import rsync_fetch, fetch_iamondb
 
 # wiggly boi
 # python -u generate.py --model=summary/experiment-32/models/model-7 --text="stop sampling and get back to work" --seed=172 --stop_scale=7.5 --color=k
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--model', dest='model_path', type=str, default=os.path.join('pretrained', 'model-29'))
+parser.add_argument('--model', dest='model_path', type=str, default=None)
 parser.add_argument('--text', dest='text', type=str, default=None)
 parser.add_argument('--bias', dest='bias', type=float, default=1.)
 parser.add_argument('--force', dest='force', action='store_true', default=False)
 parser.add_argument('--noinfo', dest='info', action='store_false', default=True)
 parser.add_argument('--save', dest='save', type=str, default=None)
 parser.add_argument('--seed', dest='seed', type=int, default=1999)
-parser.add_argument('--stop_scale', dest='stop_scale', type=float, default=7.5)
+parser.add_argument('--stop_scale', dest='stop_scale', type=float, default=1)
 parser.add_argument('--color', dest='color', type=str, default=None)
 args = parser.parse_args()
+if args.model_path == None:
+    raise ValueError("Must pass --model argument, e.g. summary/experiment-0/models/model-7")
 
 random_state = np.random.RandomState(args.seed)
 
@@ -214,11 +217,16 @@ def sample_text(sess, args_text, translation):
 
 
 def main():
-    with open(os.path.join('data', 'translation.pkl'), 'rb') as file:
-        translation = pickle.load(file)
+    iamondb = rsync_fetch(fetch_iamondb, "leto01")
+    translation = iamondb["vocabulary"]
+    #with open(os.path.join('data', 'translation.pkl'), 'rb') as file:
+    #    translation = pickle.load(file)
     rev_translation = {v: k for k, v in translation.items()}
+
     charset = [rev_translation[i] for i in range(len(rev_translation))]
-    charset[0] = ''
+    # just for display purposes - replace <NULL> with ''
+    charset[translation["<NULL>"]] = ""
+    assert translation["<NULL>"] == 0
 
     config = tf.ConfigProto(
         device_count={'GPU': 0}
