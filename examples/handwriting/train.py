@@ -34,17 +34,20 @@ parser.add_argument('--restore', dest='restore', default=None, type=str)
 args = parser.parse_args()
 
 iamondb = rsync_fetch(fetch_iamondb, "leto01")
-itr_random_state = np.random.RandomState(2177)
 trace_data = iamondb["data"]
 char_data = iamondb["target"]
 batch_size = args.batch_size
 truncation_len = args.seq_len
 vocabulary_size = len(iamondb["vocabulary"])
+itr_random_state = np.random.RandomState(2177)
 itr = tbptt_list_iterator(trace_data, [char_data], batch_size, truncation_len,
                           other_one_hot_size=[vocabulary_size],
                           random_state=itr_random_state)
+#seq_len = truncation_len
+#batch_generator = BatchGenerator(batch_size, seq_len, 2177)
+#rli = itr.next_masked_batch()
+#rbg = batch_generator.next_batch2()
 #r = itr.next_batch()
-#rm = itr.next_masked_batch()
 
 epsilon = 1e-8
 
@@ -290,9 +293,8 @@ def main():
     num_units = args.units
     batches_per_epoch = 1000
 
-    batch_generator = BatchGenerator(batch_size, seq_len, 2177)
 
-    g, vs = create_graph(batch_generator.num_letters, batch_size,
+    g, vs = create_graph(vocabulary_size, batch_size,
                          num_units=args.units, lstm_layers=args.lstm_layers,
                          window_mixtures=args.window_mixtures,
                          output_mixtures=args.output_mixtures)
@@ -335,7 +337,7 @@ def main():
 
         logger.info(" ")
 
-        num_letters = batch_generator.num_letters
+        num_letters = vocabulary_size
         att_w_init_np = np.zeros((batch_size, num_letters))
         att_k_init_np = np.zeros((batch_size, window_mixtures))
         att_h_init_np = np.zeros((batch_size, num_units))

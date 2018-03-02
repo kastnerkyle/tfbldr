@@ -475,6 +475,9 @@ class tbptt_list_iterator(object):
                  tbptt_one_hot_size=None, other_one_hot_size=None,
                  random_state=None):
         """
+        skips sequences shorter than truncation_len
+        also cuts the tail off
+
         tbptt_one_hot_size
         should be either None, or the one hot size desired
 
@@ -502,7 +505,15 @@ class tbptt_list_iterator(object):
             assert len(other_one_hot_size) == len(list_of_other_seqs)
 
         tbptt_seqs_length = [n for n, i in enumerate(tbptt_seqs)][-1] + 1
-        self.tbptt_seqs_length_ = tbptt_seqs_length
+        self.indices_lookup_ = {}
+        s = 0
+        for n, ts in enumerate(tbptt_seqs):
+            if len(ts) >= truncation_length + 1:
+                self.indices_lookup_[s] = n
+                s += 1
+
+        # this one has things removed
+        self.tbptt_seqs_length_ = len(self.indices_lookup_)
 
         other_seqs_lengths = []
         for other_seqs in list_of_other_seqs:
@@ -519,10 +530,10 @@ class tbptt_list_iterator(object):
             other_seqs_max_lengths.append(max_l)
         self.other_seqs_max_lengths_ = other_seqs_max_lengths
 
-        # make sure all sequences have the same number of elements
+        # make sure all sequences have the minimum number of elements
         base = self.tbptt_seqs_length_
         for sl in self.other_seqs_lengths_:
-            assert sl == base
+            assert sl >= base
 
         # set up the matrices to slice one_hot indexes out of
         # todo: setup slice functions? or just keep handling in next_batch
@@ -541,8 +552,9 @@ class tbptt_list_iterator(object):
                 else:
                     self._other_oh_slicers.append(np.eye(ooh, dtype=np.float32))
         # set up the indices selected for the first batch
-        self.indices_ = self.random_state.choice(self.tbptt_seqs_length_,
-                                                 size=(batch_size,), replace=False)
+        self.indices_ = np.array([self.indices_lookup_[si]
+                                  for si in self.random_state.choice(self.tbptt_seqs_length_,
+                                      size=(batch_size,), replace=False)])
         # set up the batch offset indicators for tracking where we are
         self.batches_ = np.zeros((batch_size,), dtype=np.int32)
 
@@ -552,7 +564,7 @@ class tbptt_list_iterator(object):
         for i in range(self.batch_size):
             # cuts off the end of every long sequence! tricky logic
             if self.batches_[i] + self.truncation_length + 1 > self.tbptt_seqs[self.indices_[i]].shape[0]:
-                ni = self.random_state.randint(0, self.tbptt_seqs_length_ - 1)
+                ni = self.indices_lookup_[self.random_state.randint(0, self.tbptt_seqs_length_ - 1)]
                 self.indices_[i] = ni
                 self.batches_[i] = 0
                 reset_states[i] = 0.
@@ -578,8 +590,8 @@ class tbptt_list_iterator(object):
                       for ni, other_arr in enumerate(other_items)]
         for i in range(self.batch_size):
             ns = truncation_items[i][self.batches_[i]:self.batches_[i] + self.truncation_length + 1]
-            # need this for short sequences, long sequences handled by start check
-            tbptt_arr[:len(ns), i, :] = ns
+            # dropped sequences shorter than truncation_len already
+            tbptt_arr[:, i, :] = ns
             for na, oa in enumerate(other_arrs):
                 oa[:len(other_items[na][i]), i, :] = other_items[na][i]
             self.batches_[i] += self.truncation_length
