@@ -338,7 +338,6 @@ def main():
         logger.info(" ")
 
         num_letters = vocabulary_size
-
         att_w_init = np.zeros((batch_size, num_letters))
         att_k_init = np.zeros((batch_size, window_mixtures))
         att_h_init = np.zeros((batch_size, num_units))
@@ -348,50 +347,60 @@ def main():
         h2_init = np.zeros((batch_size, num_units))
         c2_init = np.zeros((batch_size, num_units))
 
-        stateful_args = [att_w_init,
-                         att_k_init,
-                         att_h_init,
-                         att_c_init,
-                         h1_init,
-                         c1_init,
-                         h2_init,
-                         c2_init]
-
         for e in range(epoch, num_epoch):
             logger.info("Epoch {}".format(e))
             for b in range(1, batches_per_epoch + 1):
+                #coords, coords_mask, seq, seq_mask, reset = batch_generator.next_batch2()
                 coords, coords_mask, seq, seq_mask, reset = itr.next_masked_batch()
 
-                # these will have to be passed in as a list
-                for sa in stateful_args:
-                    sa *= reset
+                att_w_init *= reset
+                att_k_init *= reset
+                att_h_init *= reset
+                att_c_init *= reset
+                h1_init *= reset
+                c1_init *= reset
+                h2_init *= reset
+                c2_init *= reset
 
                 feed = {vs.coordinates: coords,
                         vs.coordinates_mask: coords_mask,
                         vs.sequence: seq,
                         vs.sequence_mask: seq_mask,
-                        vs.att_w_init: stateful_args[0],
-                        vs.att_k_init: stateful_args[1],
-                        vs.att_h_init: stateful_args[2],
-                        vs.att_c_init: stateful_args[3],
-                        vs.h1_init: stateful_args[4],
-                        vs.c1_init: stateful_args[5],
-                        vs.h2_init: stateful_args[6],
-                        vs.c2_init: stateful_args[7]}
-                outs = [vs.att_w, vs.att_k,
+                        vs.att_w_init: att_w_init,
+                        vs.att_k_init: att_k_init,
+                        vs.att_h_init: att_h_init,
+                        vs.att_c_init: att_c_init,
+                        vs.h1_init: h1_init,
+                        vs.c1_init: c1_init,
+                        vs.h2_init: h2_init,
+                        vs.c2_init: c2_init}
+                outs = [vs.att_w, vs.att_k, vs.att_phi,
                         vs.att_h, vs.att_c,
                         vs.h1, vs.c1, vs.h2, vs.c2,
-                        vs.att_phi,
                         vs.loss, vs.summary, vs.train_step]
                 r = sess.run(outs, feed_dict=feed)
-
-                # the update part will be after the loop
-                for n, sa in enumerate(stateful_args):
-                    sa[:] = r[n][-1]
-
+                att_w_np = r[0]
+                att_k_np = r[1]
+                att_phi_np = r[2]
+                att_h_np = r[3]
+                att_c_np = r[5]
+                h1_np = r[5]
+                c1_np = r[6]
+                h2_np = r[7]
+                c2_np = r[8]
                 l = r[-3]
                 s = r[-2]
                 _ = r[-1]
+
+                # set next inits
+                att_w_init = att_w_np[-1]
+                att_k_init = att_k_np[-1]
+                att_h_init = att_h_np[-1]
+                att_c_init = att_c_np[-1]
+                h1_init = h1_np[-1]
+                c1_init = c1_np[-1]
+                h2_init = h2_np[-1]
+                c2_init = c2_np[-1]
                 summary_writer.add_summary(s, global_step=e * batches_per_epoch + b)
                 print('\r[{:5d}/{:5d}] loss = {}'.format(b, batches_per_epoch, l), end='')
             logger.info("\n[{:5d}/{:5d}] loss = {}".format(b, batches_per_epoch, l))
