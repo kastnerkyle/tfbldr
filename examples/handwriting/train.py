@@ -140,7 +140,7 @@ def create_graph(num_letters, batch_size,
             output = r[0]
             att_w = r[1]
             att_k = r[2]
-            att_phi = r[3]
+            att_phi = r[5]
             att_h = r[4]
             att_c = r[5]
             h1 = r[6]
@@ -355,6 +355,7 @@ def main():
                          c1_init,
                          h2_init,
                          c2_init]
+        reset_random_state = np.random.RandomState(1117)
 
         def loop(itr, extras, stateful_args):
             coords, coords_mask, seq, seq_mask, reset = itr.next_masked_batch()
@@ -389,20 +390,28 @@ def main():
                     vs.c1_init: c1_init,
                     vs.h2_init: h2_init,
                     vs.c2_init: c2_init}
-            outs = [vs.att_w, vs.att_k, vs.att_phi,
+            outs = [vs.att_w, vs.att_k,
                     vs.att_h, vs.att_c,
                     vs.h1, vs.c1, vs.h2, vs.c2,
+                    vs.att_phi,
                     vs.loss, vs.summary, vs.train_step]
             r = sess.run(outs, feed_dict=feed)
+
+            reset_att_cells = reset_random_state.randint(0, 2)
+            reset_c1_cells = reset_random_state.randint(0, 2)
+            reset_c2_cells = reset_random_state.randint(0, 2)
+
             att_w_np = r[0]
             att_k_np = r[1]
-            att_phi_np = r[2]
-            att_h_np = r[3]
-            att_c_np = r[5]
-            h1_np = r[5]
-            c1_np = r[6]
-            h2_np = r[7]
-            c2_np = r[8]
+            # not a typo
+            # tie att_c and c1 together at tbptt boundary
+            att_h_np = r[2]
+            att_c_np = r[3] #reset_att_cells * r[3]
+            h1_np = r[4]
+            c1_np = r[5] #reset_c1_cells * r[5]
+            h2_np = r[6]
+            c2_np = r[7] #reset_c2_cells * r[7]
+            att_phi_np = r[8]
             l = r[-3]
             s = r[-2]
             _ = r[-1]
