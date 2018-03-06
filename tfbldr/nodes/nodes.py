@@ -428,6 +428,12 @@ def SimpleRNNCell(list_of_inputs, list_of_input_dims, previous_hidden,
     return h_to_out, (h,)
 
 
+def _dropout(tensor, keep_threshold, seed):
+    sample = tf.where(tf.random_uniform([], minval=0., maxval=1., seed=seed) < keep_threshold,
+                      tf.ones([]), tf.zeros([]))
+    return sample * tensor
+
+
 def LSTMCell(list_of_inputs, list_of_input_dims,
              previous_hidden, previous_cell,
              num_units,
@@ -435,7 +441,10 @@ def LSTMCell(list_of_inputs, list_of_input_dims,
              input_mask=None,
              random_state=None,
              name=None, init=None, scale="default",
-             forget_bias=1., strict=None):
+             forget_bias=1.,
+             cell_dropout=None,
+             strict=None):
+    # cell_dropout should be a value in [0., 1.], or None
     # output is the thing to use in following layers, state is a tuple that feeds into the next call
     if random_state is None:
         raise ValueError("Must pass random_state")
@@ -476,7 +485,13 @@ def LSTMCell(list_of_inputs, list_of_input_dims,
 
     i, j, f, o = tf.split(lstm_proj, 4, axis=-1)
 
-    c = tf.sigmoid(f + forget_bias) * previous_cell + tf.sigmoid(i) * tf.tanh(j)
+    if cell_dropout is not None:
+        pj = tf.nn.dropout(tf.tanh(j), cell_dropout,
+                           seed=random_state.randint(0, 1E6))
+    else:
+        pj = tf.tanh(j)
+
+    c = tf.sigmoid(f + forget_bias) * previous_cell + tf.sigmoid(i) * pj
     if input_mask is not None:
         c = input_mask[:, None] * c + (1. - input_mask[:, None]) * previous_cell
 
@@ -512,7 +527,9 @@ def GaussianAttentionCell(list_of_step_inputs, list_of_step_input_dims,
                           name=None,
                           input_mask=None,
                           conditioning_mask=None,
-                          random_state=None, strict=None, init=None):
+                          random_state=None,
+                          cell_dropout=None,
+                          strict=None, init=None):
     #returns w_t, k_t, phi_t, state
     # where state is the state tuple retruned by the inner cell_type
 
@@ -539,6 +556,7 @@ def GaussianAttentionCell(list_of_step_inputs, list_of_step_input_dims,
                                       num_units,
                                       input_mask=input_mask,
                                       random_state=random_state,
+                                      cell_dropout=cell_dropout,
                                       name=name + "_gauss_att_lstm",
                                       init=rnn_init)
     else:

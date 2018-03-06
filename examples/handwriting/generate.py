@@ -15,9 +15,6 @@ from collections import namedtuple
 import time
 from tfbldr.datasets import rsync_fetch, fetch_iamondb
 
-# wiggly boi
-# python -u generate.py --model=summary/experiment-32/models/model-7 --text="stop sampling and get back to work" --seed=172 --stop_scale=7.5 --color=k
-
 parser = argparse.ArgumentParser()
 parser.add_argument('--model', dest='model_path', type=str, default=None)
 parser.add_argument('--text', dest='text', type=str, default=None)
@@ -26,7 +23,8 @@ parser.add_argument('--force', dest='force', action='store_true', default=False)
 parser.add_argument('--noinfo', dest='info', action='store_false', default=True)
 parser.add_argument('--save', dest='save', type=str, default=None)
 parser.add_argument('--seed', dest='seed', type=int, default=1999)
-parser.add_argument('--stop_scale', dest='stop_scale', type=float, default=1.5)
+parser.add_argument('--stop_scale', dest='stop_scale', type=float, default=7.5)
+parser.add_argument('--stop_step', dest='stop_step', type=str, default=None)
 parser.add_argument('--color', dest='color', type=str, default=None)
 args = parser.parse_args()
 if args.model_path == None:
@@ -68,6 +66,7 @@ def sample_text(sess, args_text, translation):
               'sequence',
               'sequence_mask',
               'bias',
+              'cell_dropout',
               'e', 'pi', 'mu1', 'mu2', 'std1', 'std2', 'rho',
               'att_w_init', 'att_w',
               'att_k_init', 'att_k',
@@ -122,6 +121,7 @@ def sample_text(sess, args_text, translation):
                 vs.sequence: sequence,
                 vs.sequence_mask: sequence_mask,
                 vs.bias: args.bias,
+                vs.cell_dropout: 1.,
                 vs.att_w_init: att_w_init_np, #*0
                 vs.att_k_init: att_k_init_np, #*0
                 vs.att_h_init: att_h_init_np, #*0
@@ -206,9 +206,39 @@ def sample_text(sess, args_text, translation):
         #thresh = mu1.mean() > 1.1 * len(text)
         #thresh = finish[0, 0] > 0.9
 
+        """
+        # sequence.argmax(axis=-1)[:, 0]
+        sequence_ints = sequence.argmax(axis=-1)[:, 0]
+        window_match = np.array([window_data[i].argmax() for i in range(len(window_data))])
+        all_match = False
+        si_idx = 0
+        last_match = None
+        last_match_step = np.inf
+        for n, wm in enumerate(window_match):
+            if wm == sequence_ints[si_idx]:
+                si_idx += 1
+
+            # not a typo, -2 to avoid trailing 0
+            if si_idx == len(sequence_ints) - 2:
+                last_match = wm
+                last_match_step = n
+
+            # once all the things match and we are past the last step
+            # hold until the attended char changes
+            if wm != last_match and n >= last_match_step: #wm != last_match and n >= last_match_step:
+                all_match = True
+
+        thresh = all_match
+        """
+
         if not args.force and thresh:
             print('\nFinished sampling!\n')
             break
+
+        if args.stop_step is not None:
+            if s >= float(args.stop_step):
+                print('\nFinished sampling!\n')
+                break
 
     # becomes (len, 1, batch_size, 3)
     coords = np.array(coords)[:, 0, choose_i]

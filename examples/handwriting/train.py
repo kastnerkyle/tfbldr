@@ -25,10 +25,11 @@ tf.set_random_seed(2899)
 parser = argparse.ArgumentParser()
 parser.add_argument('--seq_len', dest='seq_len', default=256, type=int)
 parser.add_argument('--batch_size', dest='batch_size', default=64, type=int)
-parser.add_argument('--epochs', dest='epochs', default=8, type=int)
+parser.add_argument('--epochs', dest='epochs', default=30, type=int)
 parser.add_argument('--window_mixtures', dest='window_mixtures', default=10, type=int)
 parser.add_argument('--output_mixtures', dest='output_mixtures', default=20, type=int)
 parser.add_argument('--lstm_layers', dest='lstm_layers', default=3, type=int)
+parser.add_argument('--cell_dropout', dest='cell_dropout', default=.9, type=float)
 parser.add_argument('--units_per_layer', dest='units', default=400, type=int)
 parser.add_argument('--restore', dest='restore', default=None, type=str)
 args = parser.parse_args()
@@ -38,6 +39,7 @@ trace_data = iamondb["data"]
 char_data = iamondb["target"]
 batch_size = args.batch_size
 truncation_len = args.seq_len
+cell_dropout_scale = args.cell_dropout
 vocabulary_size = len(iamondb["vocabulary"])
 itr_random_state = np.random.RandomState(2177)
 itr = tbptt_list_iterator(trace_data, [char_data], batch_size, truncation_len,
@@ -73,6 +75,7 @@ def create_graph(num_letters, batch_size,
         sequence_mask = tf.placeholder(tf.float32, shape=[None, batch_size])
 
         bias = tf.placeholder_with_default(tf.zeros(shape=[]), shape=[])
+        cell_dropout = tf.placeholder_with_default(cell_dropout_scale * tf.ones(shape=[]), shape=[])
         att_w_init = tf.placeholder(tf.float32, shape=[batch_size, num_letters])
         att_k_init = tf.placeholder(tf.float32, shape=[batch_size, window_mixtures])
         att_h_init = tf.placeholder(tf.float32, shape=[batch_size, num_units])
@@ -82,15 +85,10 @@ def create_graph(num_letters, batch_size,
         h2_init = tf.placeholder(tf.float32, shape=[batch_size, num_units])
         c2_init = tf.placeholder(tf.float32, shape=[batch_size, num_units])
 
-        def create_model(generate=None):
+        def create_model():
             in_coordinates = coordinates[:-1, :, :]
             in_coordinates_mask = coordinates_mask[:-1]
             out_coordinates = coordinates[1:, :, :]
-            #noise = tf.random_normal(tf.shape(out_coordinates), seed=random_state.randint(5000))
-            #noise_pwr = tf.sqrt(tf.reduce_sum(tf.square(out_coordinates[:, :, :-1]), axis=-1)) / 2.
-            #out_coordinates_part = noise_pwr[:, :, None] * noise[:, :, :-1] + out_coordinates[:, :, :-1]
-            #out_coordinates = tf.concat([out_coordinates_part, out_coordinates[:, :, -1][:, :, None]],
-            #                            axis=-1)
             out_coordinates_mask = coordinates_mask[1:]
 
             def step(inp_t, inp_mask_t,
@@ -109,6 +107,7 @@ def create_graph(num_letters, batch_size,
                                           attention_scale = 1. / 25.,
                                           name="att",
                                           random_state=random_state,
+                                          cell_dropout=cell_dropout,
                                           init=rnn_init)
                 att_w_t, att_k_t, att_phi_t, s = o
                 att_h_t = s[0]
@@ -119,6 +118,7 @@ def create_graph(num_letters, batch_size,
                                      h1_tm1, c1_tm1, num_units,
                                      input_mask=inp_mask_t,
                                      random_state=random_state,
+                                     cell_dropout=cell_dropout,
                                      name="rnn1", init=rnn_init)
                 h1_t = s[0]
                 c1_t = s[1]
@@ -128,6 +128,7 @@ def create_graph(num_letters, batch_size,
                                      h2_tm1, c2_tm1, num_units,
                                      input_mask=inp_mask_t,
                                      random_state=random_state,
+                                     cell_dropout=cell_dropout,
                                      name="rnn2", init=rnn_init)
                 h2_t = s[0]
                 c2_t = s[1]
@@ -140,13 +141,14 @@ def create_graph(num_letters, batch_size,
             output = r[0]
             att_w = r[1]
             att_k = r[2]
-            att_phi = r[5]
+            att_phi = r[3]
             att_h = r[4]
             att_c = r[5]
             h1 = r[6]
             c1 = r[7]
             h2 = r[8]
             c2 = r[9]
+
 
             #output = tf.reshape(output, [-1, num_units])
             mo = BernoulliAndCorrelatedGMM([output], [num_units],
@@ -188,6 +190,7 @@ def create_graph(num_letters, batch_size,
                           ('sequence', sequence),
                           ('sequence_mask', sequence_mask),
                           ('bias', bias),
+                          ('cell_dropout', cell_dropout),
                           ('e', e), ('pi', pi),
                           ('mu1', mu1), ('mu2', mu2),
                           ('std1', std1), ('std2', std2),
@@ -279,9 +282,7 @@ def create_graph(num_letters, batch_size,
                          summary]
             return namedtuple('Model', things_names)(*things_tf)
 
-        train_model = create_model(generate=None)
-        _ = create_model(generate=True)  # just to create ops for generation
-
+        train_model = create_model()
     return graph, train_model
 
 
@@ -355,7 +356,6 @@ def main():
                          c1_init,
                          h2_init,
                          c2_init]
-        reset_random_state = np.random.RandomState(1117)
 
         def loop(itr, extras, stateful_args):
             coords, coords_mask, seq, seq_mask, reset = itr.next_masked_batch()
@@ -397,20 +397,14 @@ def main():
                     vs.loss, vs.summary, vs.train_step]
             r = sess.run(outs, feed_dict=feed)
 
-            reset_att_cells = reset_random_state.randint(0, 2)
-            reset_c1_cells = reset_random_state.randint(0, 2)
-            reset_c2_cells = reset_random_state.randint(0, 2)
-
             att_w_np = r[0]
             att_k_np = r[1]
-            # not a typo
-            # tie att_c and c1 together at tbptt boundary
             att_h_np = r[2]
-            att_c_np = r[3] #reset_att_cells * r[3]
+            att_c_np = r[3]
             h1_np = r[4]
-            c1_np = r[5] #reset_c1_cells * r[5]
+            c1_np = r[5]
             h2_np = r[6]
-            c2_np = r[7] #reset_c2_cells * r[7]
+            c2_np = r[7]
             att_phi_np = r[8]
             l = r[-3]
             s = r[-2]
