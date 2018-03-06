@@ -8,8 +8,7 @@ from collections import namedtuple
 import logging
 import shutil
 from tfbldr.datasets import rsync_fetch, fetch_iamondb
-from tfbldr.datasets import tbptt_list_iterator, BatchGenerator
-#from batch_generator import BatchGenerator
+from tfbldr.datasets import tbptt_list_iterator
 from tfbldr.utils import next_experiment_path
 from tfbldr import get_logger
 from tfbldr.nodes import Linear
@@ -45,12 +44,6 @@ itr_random_state = np.random.RandomState(2177)
 itr = tbptt_list_iterator(trace_data, [char_data], batch_size, truncation_len,
                           other_one_hot_size=[vocabulary_size],
                           random_state=itr_random_state)
-#seq_len = truncation_len
-#batch_generator = BatchGenerator(batch_size, seq_len, 2177)
-#rli = itr.next_masked_batch()
-#rbg = batch_generator.next_batch2()
-#r = itr.next_batch()
-
 epsilon = 1e-8
 
 h_dim = args.units
