@@ -580,9 +580,14 @@ def run_loop(sess,
 
     cumulative_train_time = []
     minibatch_train_time = []
+    minibatch_train_count = []
     cumulative_valid_time = []
     minibatch_valid_time = []
+    minibatch_valid_count = []
     while True:
+        # stop at the start of an epoch
+        if train_itr_steps_taken + 1 >= n_steps:
+            break
         extras = {}
         extras["train"] = True
         assert n_train_steps_per >= 1
@@ -602,6 +607,7 @@ def run_loop(sess,
             minibatch_train_time.append(minibatch_time)
             train_summary = r[1]
             train_itr_steps_taken += 1
+            minibatch_train_count.append(train_itr_steps_taken)
             if (time.time() - last_status) > status_every_s:
                 logger.info("train step {}/{}, overall train step {}".format(i + 1, n_train_steps_per, train_itr_steps_taken))
                 logger.info("train loss {}, overall train average {}".format(train_loss, np.mean(overall_train_loss + this_train_loss)))
@@ -627,6 +633,7 @@ def run_loop(sess,
                 minibatch_valid_time.append(minibatch_time)
                 valid_summary = r[1]
                 valid_itr_steps_taken += 1
+                minibatch_valid_count.append(valid_itr_steps_taken)
                 if (time.time() - last_status) > status_every_s:
                     logger.info("valid step {}/{}, overall valid step {}".format(i + 1, n_valid_steps_per, valid_itr_steps_taken))
                     logger.info("valid loss {}, overall valid average {}".format(valid_loss, np.mean(overall_valid_loss + this_valid_loss)))
@@ -646,12 +653,16 @@ def run_loop(sess,
         results_dict["train_loss"] = overall_train_loss
         results_dict["train_minibatch_time_auto"] = minibatch_train_time
         results_dict["train_cumulative_time_auto"] = cumulative_train_time
+        results_dict["train_minibatch_count_auto"] = minibatch_train_count
         if len(overall_valid_loss) > 0:
             results_dict["valid_loss"] = overall_valid_loss
             results_dict["valid_minibatch_time_auto"] = minibatch_valid_time
             results_dict["valid_cumulative_time_auto"] = cumulative_valid_time
+            results_dict["valid_minibatch_count_auto"] = minibatch_valid_count
 
         thw.send((save_html_path, results_dict))
         model_saver.save(sess, os.path.join(checkpoint_dir, "models", "model"),
                          global_step=train_itr_steps_taken)
         extras["train"] = True
+
+    logger.info("Training complete, exiting...")

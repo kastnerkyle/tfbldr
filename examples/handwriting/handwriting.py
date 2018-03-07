@@ -382,6 +382,7 @@ def main():
         run_loop(sess,
                  loop, itr,
                  loop, itr,
+                 n_steps=30000,
                  n_train_steps_per=1000,
                  train_stateful_args=stateful_args,
                  n_valid_steps_per=0,
