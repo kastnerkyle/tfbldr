@@ -11,6 +11,7 @@ from tfbldr.datasets import rsync_fetch, fetch_iamondb
 from tfbldr.datasets import tbptt_list_iterator
 from tfbldr.utils import next_experiment_path
 from tfbldr import get_logger
+from tfbldr import run_loop
 from tfbldr.nodes import Linear
 from tfbldr.nodes import Linear
 from tfbldr.nodes import LSTMCell
@@ -19,7 +20,6 @@ from tfbldr.nodes import BernoulliAndCorrelatedGMM
 from tfbldr.nodes import BernoulliAndCorrelatedGMMCost
 from tfbldr import scan
 
-tf.set_random_seed(2899)
 # TODO: add help info
 parser = argparse.ArgumentParser()
 parser.add_argument('--seq_len', dest='seq_len', default=256, type=int)
@@ -44,7 +44,7 @@ itr_random_state = np.random.RandomState(2177)
 itr = tbptt_list_iterator(trace_data, [char_data], batch_size, truncation_len,
                           other_one_hot_size=[vocabulary_size],
                           random_state=itr_random_state)
-epsilon = 1e-8
+epsilon = 1E-8
 
 h_dim = args.units
 forward_init = "truncated_normal"
@@ -165,12 +165,6 @@ def create_graph(num_letters, batch_size,
                                                es,
                                                [xs, ys],
                                                name="cost")
-            # mask + reduce_mean, slightly unstable
-            #cc = in_coordinates_mask * cc
-            #loss = tf.reduce_mean(cc)
-            # mask + true weighted, better (flat) but also unstable
-            #loss = tf.reduce_sum(cc / (tf.reduce_sum(in_coordinates_mask)))
-            # no mask on loss - 0s become a form of biasing / noise?
             loss = tf.reduce_mean(cc)
 
             # save params for easier model loading and prediction
@@ -287,59 +281,92 @@ def main():
     num_units = args.units
     batches_per_epoch = 1000
 
-
     g, vs = create_graph(vocabulary_size, batch_size,
                          num_units=args.units, lstm_layers=args.lstm_layers,
                          window_mixtures=args.window_mixtures,
                          output_mixtures=args.output_mixtures)
 
-    with tf.Session(graph=g) as sess:
-        model_saver = tf.train.Saver(max_to_keep=2)
-        if restore_model:
-            model_file = tf.train.latest_checkpoint(os.path.join(restore_model, 'models'))
-            experiment_path = restore_model
-            epoch = int(model_file.split('-')[-1]) + 1
-            model_saver.restore(sess, model_file)
-        else:
-            sess.run(tf.global_variables_initializer())
-            experiment_path = next_experiment_path()
-            epoch = 0
+    num_letters = vocabulary_size
+    att_w_init = np.zeros((batch_size, num_letters))
+    att_k_init = np.zeros((batch_size, window_mixtures))
+    att_h_init = np.zeros((batch_size, num_units))
+    att_c_init = np.zeros((batch_size, num_units))
+    h1_init = np.zeros((batch_size, num_units))
+    c1_init = np.zeros((batch_size, num_units))
+    h2_init = np.zeros((batch_size, num_units))
+    c2_init = np.zeros((batch_size, num_units))
 
-        logger = get_logger()
-        fh = logging.FileHandler(os.path.join(experiment_path, "experiment_run.log"))
-        fh.setLevel(logging.INFO)
-        logger.addHandler(fh)
+    stateful_args = [att_w_init,
+                     att_k_init,
+                     att_h_init,
+                     att_c_init,
+                     h1_init,
+                     c1_init,
+                     h2_init,
+                     c2_init]
 
-        logger.info(" ")
-        logger.info("Using experiment path {}".format(experiment_path))
-        logger.info(" ")
-        #shutil.copy2(os.getcwd() + "/" + __file__, experiment_path)
-        #shutil.copy2(os.getcwd() + "/" + "tfdllib.py", experiment_path)
+    def loop(sess, itr, extras, stateful_args):
+        coords, coords_mask, seq, seq_mask, reset = itr.next_masked_batch()
 
-        for k, v in args.__dict__.items():
-            logger.info("argparse argument {} had value {}".format(k, v))
+        att_w_init = stateful_args[0]
+        att_k_init = stateful_args[1]
+        att_h_init = stateful_args[2]
+        att_c_init = stateful_args[3]
+        h1_init = stateful_args[4]
+        c1_init = stateful_args[5]
+        h2_init = stateful_args[6]
+        c2_init = stateful_args[7]
 
-        logger.info(" ")
-        logger.info("Model information")
-        for t_var in tf.trainable_variables():
-            logger.info(t_var)
-        logger.info(" ")
+        att_w_init *= reset
+        att_k_init *= reset
+        att_h_init *= reset
+        att_c_init *= reset
+        h1_init *= reset
+        c1_init *= reset
+        h2_init *= reset
+        c2_init *= reset
 
-        summary_writer = tf.summary.FileWriter(experiment_path, graph=g, flush_secs=10)
-        summary_writer.add_session_log(tf.SessionLog(status=tf.SessionLog.START),
-                                       global_step=epoch * batches_per_epoch)
+        feed = {vs.coordinates: coords,
+                vs.coordinates_mask: coords_mask,
+                vs.sequence: seq,
+                vs.sequence_mask: seq_mask,
+                vs.att_w_init: att_w_init,
+                vs.att_k_init: att_k_init,
+                vs.att_h_init: att_h_init,
+                vs.att_c_init: att_c_init,
+                vs.h1_init: h1_init,
+                vs.c1_init: c1_init,
+                vs.h2_init: h2_init,
+                vs.c2_init: c2_init}
+        outs = [vs.att_w, vs.att_k,
+                vs.att_h, vs.att_c,
+                vs.h1, vs.c1, vs.h2, vs.c2,
+                vs.att_phi,
+                vs.loss, vs.summary, vs.train_step]
+        r = sess.run(outs, feed_dict=feed)
 
-        logger.info(" ")
+        att_w_np = r[0]
+        att_k_np = r[1]
+        att_h_np = r[2]
+        att_c_np = r[3]
+        h1_np = r[4]
+        c1_np = r[5]
+        h2_np = r[6]
+        c2_np = r[7]
+        att_phi_np = r[8]
+        l = r[-3]
+        s = r[-2]
+        _ = r[-1]
 
-        num_letters = vocabulary_size
-        att_w_init = np.zeros((batch_size, num_letters))
-        att_k_init = np.zeros((batch_size, window_mixtures))
-        att_h_init = np.zeros((batch_size, num_units))
-        att_c_init = np.zeros((batch_size, num_units))
-        h1_init = np.zeros((batch_size, num_units))
-        c1_init = np.zeros((batch_size, num_units))
-        h2_init = np.zeros((batch_size, num_units))
-        c2_init = np.zeros((batch_size, num_units))
+        # set next inits
+        att_w_init = att_w_np[-1]
+        att_k_init = att_k_np[-1]
+        att_h_init = att_h_np[-1]
+        att_c_init = att_c_np[-1]
+        h1_init = h1_np[-1]
+        c1_init = c1_np[-1]
+        h2_init = h2_np[-1]
+        c2_init = c2_np[-1]
 
         stateful_args = [att_w_init,
                          att_k_init,
@@ -349,92 +376,16 @@ def main():
                          c1_init,
                          h2_init,
                          c2_init]
+        return l, s, stateful_args
 
-        def loop(itr, extras, stateful_args):
-            coords, coords_mask, seq, seq_mask, reset = itr.next_masked_batch()
-
-            att_w_init = stateful_args[0]
-            att_k_init = stateful_args[1]
-            att_h_init = stateful_args[2]
-            att_c_init = stateful_args[3]
-            h1_init = stateful_args[4]
-            c1_init = stateful_args[5]
-            h2_init = stateful_args[6]
-            c2_init = stateful_args[7]
-
-            att_w_init *= reset
-            att_k_init *= reset
-            att_h_init *= reset
-            att_c_init *= reset
-            h1_init *= reset
-            c1_init *= reset
-            h2_init *= reset
-            c2_init *= reset
-
-            feed = {vs.coordinates: coords,
-                    vs.coordinates_mask: coords_mask,
-                    vs.sequence: seq,
-                    vs.sequence_mask: seq_mask,
-                    vs.att_w_init: att_w_init,
-                    vs.att_k_init: att_k_init,
-                    vs.att_h_init: att_h_init,
-                    vs.att_c_init: att_c_init,
-                    vs.h1_init: h1_init,
-                    vs.c1_init: c1_init,
-                    vs.h2_init: h2_init,
-                    vs.c2_init: c2_init}
-            outs = [vs.att_w, vs.att_k,
-                    vs.att_h, vs.att_c,
-                    vs.h1, vs.c1, vs.h2, vs.c2,
-                    vs.att_phi,
-                    vs.loss, vs.summary, vs.train_step]
-            r = sess.run(outs, feed_dict=feed)
-
-            att_w_np = r[0]
-            att_k_np = r[1]
-            att_h_np = r[2]
-            att_c_np = r[3]
-            h1_np = r[4]
-            c1_np = r[5]
-            h2_np = r[6]
-            c2_np = r[7]
-            att_phi_np = r[8]
-            l = r[-3]
-            s = r[-2]
-            _ = r[-1]
-
-            # set next inits
-            att_w_init = att_w_np[-1]
-            att_k_init = att_k_np[-1]
-            att_h_init = att_h_np[-1]
-            att_c_init = att_c_np[-1]
-            h1_init = h1_np[-1]
-            c1_init = c1_np[-1]
-            h2_init = h2_np[-1]
-            c2_init = c2_np[-1]
-
-            stateful_args = [att_w_init,
-                             att_k_init,
-                             att_h_init,
-                             att_c_init,
-                             h1_init,
-                             c1_init,
-                             h2_init,
-                             c2_init]
-            return l, s, stateful_args
-
-        for e in range(epoch, num_epoch):
-            logger.info("Epoch {}".format(e))
-            for b in range(1, batches_per_epoch + 1):
-                l, s, stateful_args = loop(itr, {}, stateful_args)
-                #coords, coords_mask, seq, seq_mask, reset = batch_generator.next_batch2()
-                summary_writer.add_summary(s, global_step=e * batches_per_epoch + b)
-                print('\r[{:5d}/{:5d}] loss = {}'.format(b, batches_per_epoch, l), end='')
-            logger.info("\n[{:5d}/{:5d}] loss = {}".format(b, batches_per_epoch, l))
-            logger.info(" ")
-
-            model_saver.save(sess, os.path.join(experiment_path, 'models', 'model'),
-                             global_step=e)
+    with tf.Session(graph=g) as sess:
+        run_loop(sess,
+                 loop, itr,
+                 loop, itr,
+                 n_train_steps_per=1000,
+                 train_stateful_args=stateful_args,
+                 n_valid_steps_per=0,
+                 valid_stateful_args=stateful_args)
 
 
 if __name__ == '__main__':
