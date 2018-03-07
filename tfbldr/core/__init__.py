@@ -4,6 +4,7 @@ from .core import scan
 from .core import _get_name
 from .core import _get_shared
 from .core import _set_shared
+from .core import run_loop
 from .core import print_network
 from .core import ndim
 from .core import shape
