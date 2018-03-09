@@ -90,90 +90,11 @@ def make_mask(arr):
     return mask
 
 
-class BatchGenerator(object):
-    def __init__(self, batch_size, seq_len, random_seed):
-        self.batch_size = batch_size
-        self.seq_len = seq_len
-
-        self.random_state = np.random.RandomState(random_seed)
-        dataset, labels, self.translation = self.load_dataset()
-        ndataset, nlabels = [], []
-        for i in range(len(dataset)):
-            if len(dataset[i]) >= seq_len + 1:
-                ndataset += [dataset[i]]
-                nlabels += [labels[i]]
-        del dataset, labels
-        self.dataset, labels = ndataset, nlabels
-
-        self.num_letters = len(self.translation)
-        # pad all labels to be the same length
-        max_len = max(map(lambda x: len(x), labels))
-        self.labels = np.array([np.concatenate([np.eye(self.num_letters, dtype=np.float32)[l],
-                                                np.zeros((max_len - len(l) + 1, self.num_letters),
-                                                         dtype=np.float32)],
-                                               axis=0)
-                                for l in labels])
-        self.max_len = self.labels.shape[1]
-        self.indices = self.random_state.choice(len(self.dataset), size=(batch_size,), replace=False)
-        self.batches = np.zeros((batch_size,), dtype=np.int32)
-
-    def next_batch(self):
-        coords = np.zeros((self.batch_size, self.seq_len + 1, 3), dtype=np.float32)
-        sequence = np.zeros((self.batch_size, self.max_len, self.num_letters), dtype=np.float32)
-        reset_states = np.ones((self.batch_size, 1), dtype=np.float32)
-        needed = False
-        for i in range(self.batch_size):
-            if self.batches[i] + self.seq_len + 1 > self.dataset[self.indices[i]].shape[0]:
-                ni = self.random_state.randint(0, len(self.dataset) - 1)
-                self.indices[i] = ni
-                self.batches[i] = 0
-                reset_states[i] = 0.
-                needed = True
-            coords[i, :, :] = self.dataset[self.indices[i]][self.batches[i]: self.batches[i] + self.seq_len + 1]
-            sequence[i] = self.labels[self.indices[i]]
-            self.batches[i] += self.seq_len
-        return coords, sequence, reset_states, needed
-
-    def next_batch2(self):
-        r = self.next_batch()
-        coords = r[0].transpose(1, 0, 2)
-        coords_mask = make_mask(coords)
-        seq = r[1].transpose(1, 0, 2)
-        seq_mask = make_mask(seq)
-        reset = r[2]
-        needed = r[3]
-        return coords, coords_mask, seq, seq_mask, reset
-
-    @staticmethod
-    def load_dataset():
-        d = fetch_iamondb()
-        return d["data"], d["target"], d["vocabulary"]
-
-
-def dense_to_one_hot(labels_dense, num_classes=10):
-    """Convert class labels from scalars to one-hot vectors."""
-    labels_shape = labels_dense.shape
-    labels_dense = labels_dense.reshape([-1])
-    num_labels = labels_dense.shape[0]
-    index_offset = np.arange(num_labels) * num_classes
-    labels_one_hot = np.zeros((num_labels, num_classes))
-    labels_one_hot.flat[index_offset + labels_dense.ravel()] = 1
-    labels_one_hot = labels_one_hot.reshape(labels_shape+(num_classes,))
-    return labels_one_hot
-
-
-def tokenize_ind(phrase, vocabulary):
-    phrase = phrase + " "
-    vocabulary_size = len(vocabulary.keys())
-    phrase = [vocabulary[char_] for char_ in phrase]
-    phrase = np.array(phrase, dtype='int32').ravel()
-    phrase = dense_to_one_hot(phrase, vocabulary_size)
-    return phrase
-
-
 # https://mrcoles.com/blog/3-decorator-examples-and-awesome-python/
 def rsync_fetch(fetch_func, machine_to_fetch_from, *args, **kwargs):
     """
+    assumes the filename in IOError is a subdir, will rsync one level above that
+
     be sure not to call it as
     rsync_fetch(fetch_func, machine_name)
     not
@@ -263,28 +184,6 @@ def implot(arr, title="", cmap="gray", save_name=None):
     else:
         plt.savefig(save_name)
 
-
-def check_fetch_iamondb():
-    """ Check for IAMONDB data
-
-        This dataset cannot be downloaded automatically!
-    """
-    #partial_path = get_dataset_dir("iamondb")
-    partial_path = os.sep + "Tmp" + os.sep + "kastner" + os.sep + "iamondb"
-    if not os.path.exists(partial_path):
-        os.makedirs(partial_path)
-    combined_data_path = os.path.join(partial_path, "original-xml-part.tar.gz")
-    untarred_data_path = os.path.join(partial_path, "original")
-    if not os.path.exists(combined_data_path):
-        files = "original-xml-part.tar.gz"
-        url = "http://www.iam.unibe.ch/fki/databases/"
-        url += "iam-on-line-handwriting-database/"
-        url += "download-the-iam-on-line-handwriting-database"
-        err = "Path %s does not exist!" % combined_data_path
-        err += " Download the %s files from %s" % (files, url)
-        err += " and place them in the directory %s" % partial_path
-        print("WARNING: {}".format(err))
-    return partial_path
 
 """
 - all points:
@@ -419,6 +318,29 @@ def iamondb_extract(partial_path):
     print("Preprocessing finished and cached at {}".format(save_path))
 
 
+def check_fetch_iamondb():
+    """ Check for IAMONDB data
+
+        This dataset cannot be downloaded automatically!
+    """
+    #partial_path = get_dataset_dir("iamondb")
+    partial_path = os.sep + "Tmp" + os.sep + "kastner" + os.sep + "iamondb"
+    if not os.path.exists(partial_path):
+        os.makedirs(partial_path)
+    combined_data_path = os.path.join(partial_path, "original-xml-part.tar.gz")
+    untarred_data_path = os.path.join(partial_path, "original")
+    if not os.path.exists(combined_data_path):
+        files = "original-xml-part.tar.gz"
+        url = "http://www.iam.unibe.ch/fki/databases/"
+        url += "iam-on-line-handwriting-database/"
+        url += "download-the-iam-on-line-handwriting-database"
+        err = "Path %s does not exist!" % combined_data_path
+        err += " Download the %s files from %s" % (files, url)
+        err += " and place them in the directory %s" % partial_path
+        print("WARNING: {}".format(err))
+    return partial_path
+
+
 def fetch_iamondb():
     partial_path = check_fetch_iamondb()
     combined_data_path = os.path.join(partial_path, "original-xml-part.tar.gz")
@@ -464,6 +386,52 @@ def fetch_iamondb():
     inverse_translation = {v: k for k, v in translation.items()}
     dataset_storage["target_phrases"] = ["".join([inverse_translation[ci] for ci in labels[i]]) for i in range(len(labels))]
     dataset_storage["vocabulary_size"] = len(translation)
+    dataset_storage["vocabulary"] = translation
+    return dataset_storage
+
+
+def check_fetch_ljspeech(conditioning_type):
+    """ Check for ljspeech
+
+        This dataset cannot be downloaded or preprocessed automatically!
+    """
+    if conditioning_type == "hybrid":
+        partial_path = os.sep + "Tmp" + os.sep + "kastner" + os.sep + "lj_speech_hybrid_speakers"
+    else:
+        raise ValueError("Unknown conditioning_type={} specified".format(conditioning_type))
+    if not os.path.exists(partial_path):
+        os.makedirs(partial_path)
+    if not os.path.exists(partial_path + os.sep + "norm_info") or not os.path.exists(partial_path + os.sep + "numpy_features"):
+        err = "lj_speech_hybrid_speakers files not found. These files need special preprocessing! Do that, and place norm_info and numpy_features in {}"
+        print("WARNING: {}".format(err.format(partial_path)))
+    return partial_path
+
+
+def fetch_ljspeech(conditioning_type="hybrid"):
+    """
+    only returns file paths, and metadata/conversion routines
+    """
+    partial_path = check_fetch_ljspeech(conditioning_type)
+    features_path = os.path.join(partial_path, "numpy_features")
+    norm_path = os.path.join(partial_path, "norm_info")
+    if not os.path.exists(features_path) or not os.path.exists(norm_path):
+        e = IOError("No feature files found in {}, under {}".format(partial_path, features_path), None, features_path)
+        raise e
+
+    feature_files = [features_path + os.sep + f for f in os.listdir(features_path)]
+    if len(feature_files) == 0:
+        e = IOError("No feature files found in {}, under {}".format(partial_path, features_path), None, features_path)
+        raise e
+
+    ljspeech_hybridset = [' ', '!', ',', '-', '.', '?', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z']
+
+    translation = OrderedDict()
+    for n, k in enumerate(ljspeech_hybridset):
+        translation[k] = n
+
+    dataset_storage = {}
+    dataset_storage["file_paths"] = feature_files
+    dataset_storage["vocabulary_size"] = len(ljspeech_hybridset)
     dataset_storage["vocabulary"] = translation
     return dataset_storage
 
@@ -607,3 +575,157 @@ class tbptt_list_iterator(object):
         end_result.append(r[-1])
         return end_result
 
+
+class tbptt_file_list_iterator(object):
+    def __init__(self, list_of_files,
+                 file_seqs_access_fn,
+                 batch_size,
+                 truncation_length,
+                 tbptt_one_hot_size=None,
+                 other_one_hot_size=None,
+                 random_state=None):
+        """
+        skips sequences shorter than truncation_len
+        also cuts the tail off
+
+        tbptt_one_hot_size
+        should be either None, or the one hot size desired
+
+        other_one_hot_size
+        should either be None (if not doing one-hot) or a list the same length
+        as the other_seqs returned from file_seqs_access_fn with integer one hot size, or None
+        for no one_hot transformation, example:
+
+        list_of_other_seqs = [my_char_data, my_vector_data]
+        other_one_hot_size = [127, None]
+        """
+        self.list_of_files = list_of_files
+        # gets a file path, returns (tbptt_seq, other_seqs)
+        # if one_hot, the respective elements need to be *indices*
+        self.file_seqs_access_fn = file_seqs_access_fn
+        self.batch_size = batch_size
+        self.truncation_length = truncation_length
+
+        self.random_state = random_state
+        if random_state is None:
+            raise ValueError("Must pass random state for random selection")
+
+        self.tbptt_one_hot_size = tbptt_one_hot_size
+        if self.tbptt_one_hot_size is None:
+            self._tbptt_oh_slicer = None
+        else:
+            self._tbptt_oh_slicer = np.eye(tbptt_one_hot_size)
+
+        self.other_one_hot_size = other_one_hot_size
+        if other_one_hot_size is None:
+            self._other_oh_slicers = [None] * 20 # if there's more than 20 of these we have a problem
+        else:
+            self._other_oh_slicers = []
+            for ooh in other_one_hot_size:
+                if ooh is None:
+                    self._other_oh_slicers.append(None)
+                else:
+                    self._other_oh_slicers.append(np.eye(ooh, dtype=np.float32))
+
+        self.indices_ = self.random_state.choice(len(self.list_of_files), size=(batch_size,), replace=False)
+        self.batches_ = np.zeros((batch_size,), dtype=np.float32)
+        self.current_fnames_ = None
+
+        fnames = [self.list_of_files[i] for i in self.indices_]
+        self.current_fnames_ = fnames
+        datas = [self.file_seqs_access_fn(f) for f in fnames]
+        tbptt_seqs = [d[0] for d in datas]
+        other_seqs = [d[1:] for d in datas]
+
+        self.current_tbptt_seqs_ = []
+        self.current_other_seqs_ = []
+
+        for idx in range(len(tbptt_seqs)):
+            if not (len(tbptt_seqs[idx]) >= self.truncation_length + 1):
+                new_tbptt = tbptt_seqs[idx]
+                new_others = other_seqs[idx]
+                num_tries = 0
+                while not (len(new_tbptt) >= self.truncation_length + 1):
+                    #print("idx {}:file {} too short, resample".format(idx, self.indices_[idx]))
+                    new_file_idx = self.random_state.randint(0, len(self.list_of_files) - 1)
+                    fname = self.list_of_files[new_file_idx]
+                    new_data = self.file_seqs_access_fn(fname)
+                    new_tbptt = new_data[0]
+                    new_others = new_data[1:]
+                    num_tries += 1
+                    if num_tries >= 20:
+                        raise ValueError("Issue in file iterator next_batch, can't get a large enough file after 20 tries!")
+                self.indices_[idx] = new_file_idx
+                tbptt_seqs[idx] = new_tbptt
+                other_seqs[idx] = new_others
+            self.current_tbptt_seqs_.append(tbptt_seqs[idx])
+            self.current_other_seqs_.append(other_seqs[idx])
+
+    def next_batch(self):
+        reset_states = np.ones((self.batch_size, 1), dtype=np.float32)
+        # check lengths and if it's too short, resample...
+        for i in range(self.batch_size):
+            if self.batches_[i] + self.truncation_length + 1 > len(self.current_tbptt_seqs_[i]):
+                ni = self.random_state.randint(0, len(self.list_of_files) - 1)
+                fname = self.list_of_files[ni]
+                new_data = self.file_seqs_access_fn(fname)
+                new_tbptt = new_data[0]
+                new_others = new_data[1:]
+                num_tries = 0
+                while not (len(new_tbptt) >= self.truncation_length + 1):
+                    ni = self.random_state.randint(0, len(self.list_of_files) - 1)
+                    fname = self.list_of_files[ni]
+                    new_data = self.file_seqs_access_fn(fname)
+                    new_tbptt = new_data[0]
+                    new_others = new_data[1:]
+                    num_tries += 1
+                    if num_tries >= 20:
+                        print("Issue in file iterator next_batch, can't get a large enough file after {} tries! Tried {}, name {}".format(num_tries), ni, self.list_of_files[ni])
+                self.batches_[i] = 0.
+                reset_states[i] = 0.
+                self.current_tbptt_seqs_[i] = new_tbptt
+                self.current_other_seqs_[i] = new_others
+
+        items = [self.current_tbptt_seqs_[ii] for ii in range(len(self.current_tbptt_seqs_))]
+        if self._tbptt_oh_slicer is None:
+            truncation_items = items
+        else:
+            truncation_items = [self._tbptt_oh_slicer[ai] for ai in items]
+
+        other_items = []
+        # batch index
+        for oi in range(len(self.current_other_seqs_)):
+            items = self.current_other_seqs_[oi]
+            subitems = []
+            for j in range(len(items)):
+                if self._other_oh_slicers[j] is None:
+                    subitems.append(np.array(items))
+                else:
+                    subitems.append(np.array([self._other_oh_slicers[j][ai] for ai in items[j]]))
+            other_items.append(subitems)
+
+        tbptt_arr = np.zeros((self.truncation_length + 1, self.batch_size, truncation_items[0].shape[-1]))
+        other_seqs_max_lengths = [max([len(other_items[i][j]) for i in range(len(other_items))])
+                                       for j in range(len(other_items[i]))]
+        other_arrs = [np.zeros((other_seqs_max_lengths[ni], self.batch_size, np.array(other_items[0][ni]).shape[-1]), dtype=np.float32)
+                      for ni in range(len(other_items[0]))]
+
+        for i in range(self.batch_size):
+            ns = truncation_items[i][int(self.batches_[i]):int(self.batches_[i] + self.truncation_length + 1)]
+            tbptt_arr[:, i, :] = ns
+            for na in range(len(other_arrs)):
+                other_arrs[na][:len(other_items[i][na]), i, :] = other_items[i][na]
+            self.batches_[i] += self.truncation_length
+        return [tbptt_arr,] + other_arrs + [reset_states,]
+
+
+    def next_masked_batch(self):
+        r = self.next_batch()
+        # reset is the last element
+        end_result = []
+        for ri in r[:-1]:
+            ri_mask = make_mask(ri)
+            end_result.append(ri)
+            end_result.append(ri_mask)
+        end_result.append(r[-1])
+        return end_result
