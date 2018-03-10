@@ -93,6 +93,8 @@ def make_mask(arr):
 # https://mrcoles.com/blog/3-decorator-examples-and-awesome-python/
 def rsync_fetch(fetch_func, machine_to_fetch_from, *args, **kwargs):
     """
+    assumes the filename in IOError is a subdir, will rsync one level above that
+
     be sure not to call it as
     rsync_fetch(fetch_func, machine_name)
     not
@@ -182,28 +184,6 @@ def implot(arr, title="", cmap="gray", save_name=None):
     else:
         plt.savefig(save_name)
 
-
-def check_fetch_iamondb():
-    """ Check for IAMONDB data
-
-        This dataset cannot be downloaded automatically!
-    """
-    #partial_path = get_dataset_dir("iamondb")
-    partial_path = os.sep + "Tmp" + os.sep + "kastner" + os.sep + "iamondb"
-    if not os.path.exists(partial_path):
-        os.makedirs(partial_path)
-    combined_data_path = os.path.join(partial_path, "original-xml-part.tar.gz")
-    untarred_data_path = os.path.join(partial_path, "original")
-    if not os.path.exists(combined_data_path):
-        files = "original-xml-part.tar.gz"
-        url = "http://www.iam.unibe.ch/fki/databases/"
-        url += "iam-on-line-handwriting-database/"
-        url += "download-the-iam-on-line-handwriting-database"
-        err = "Path %s does not exist!" % combined_data_path
-        err += " Download the %s files from %s" % (files, url)
-        err += " and place them in the directory %s" % partial_path
-        print("WARNING: {}".format(err))
-    return partial_path
 
 """
 - all points:
@@ -338,6 +318,29 @@ def iamondb_extract(partial_path):
     print("Preprocessing finished and cached at {}".format(save_path))
 
 
+def check_fetch_iamondb():
+    """ Check for IAMONDB data
+
+        This dataset cannot be downloaded automatically!
+    """
+    #partial_path = get_dataset_dir("iamondb")
+    partial_path = os.sep + "Tmp" + os.sep + "kastner" + os.sep + "iamondb"
+    if not os.path.exists(partial_path):
+        os.makedirs(partial_path)
+    combined_data_path = os.path.join(partial_path, "original-xml-part.tar.gz")
+    untarred_data_path = os.path.join(partial_path, "original")
+    if not os.path.exists(combined_data_path):
+        files = "original-xml-part.tar.gz"
+        url = "http://www.iam.unibe.ch/fki/databases/"
+        url += "iam-on-line-handwriting-database/"
+        url += "download-the-iam-on-line-handwriting-database"
+        err = "Path %s does not exist!" % combined_data_path
+        err += " Download the %s files from %s" % (files, url)
+        err += " and place them in the directory %s" % partial_path
+        print("WARNING: {}".format(err))
+    return partial_path
+
+
 def fetch_iamondb():
     partial_path = check_fetch_iamondb()
     combined_data_path = os.path.join(partial_path, "original-xml-part.tar.gz")
@@ -383,6 +386,52 @@ def fetch_iamondb():
     inverse_translation = {v: k for k, v in translation.items()}
     dataset_storage["target_phrases"] = ["".join([inverse_translation[ci] for ci in labels[i]]) for i in range(len(labels))]
     dataset_storage["vocabulary_size"] = len(translation)
+    dataset_storage["vocabulary"] = translation
+    return dataset_storage
+
+
+def check_fetch_ljspeech(conditioning_type):
+    """ Check for ljspeech
+
+        This dataset cannot be downloaded or preprocessed automatically!
+    """
+    if conditioning_type == "hybrid":
+        partial_path = os.sep + "Tmp" + os.sep + "kastner" + os.sep + "lj_speech_hybrid_speakers"
+    else:
+        raise ValueError("Unknown conditioning_type={} specified".format(conditioning_type))
+    if not os.path.exists(partial_path):
+        os.makedirs(partial_path)
+    if not os.path.exists(partial_path + os.sep + "norm_info") or not os.path.exists(partial_path + os.sep + "numpy_features"):
+        err = "lj_speech_hybrid_speakers files not found. These files need special preprocessing! Do that, and place norm_info and numpy_features in {}"
+        print("WARNING: {}".format(err.format(partial_path)))
+    return partial_path
+
+
+def fetch_ljspeech(conditioning_type="hybrid"):
+    """
+    only returns file paths, and metadata/conversion routines
+    """
+    partial_path = check_fetch_ljspeech(conditioning_type)
+    features_path = os.path.join(partial_path, "numpy_features")
+    norm_path = os.path.join(partial_path, "norm_info")
+    if not os.path.exists(features_path) or not os.path.exists(norm_path):
+        e = IOError("No feature files found in {}, under {}".format(partial_path, features_path), None, features_path)
+        raise e
+
+    feature_files = [features_path + os.sep + f for f in os.listdir(features_path)]
+    if len(feature_files) == 0:
+        e = IOError("No feature files found in {}, under {}".format(partial_path, features_path), None, features_path)
+        raise e
+
+    ljspeech_hybridset = [' ', '!', ',', '-', '.', '?', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z']
+
+    translation = OrderedDict()
+    for n, k in enumerate(ljspeech_hybridset):
+        translation[k] = n
+
+    dataset_storage = {}
+    dataset_storage["file_paths"] = feature_files
+    dataset_storage["vocabulary_size"] = len(ljspeech_hybridset)
     dataset_storage["vocabulary"] = translation
     return dataset_storage
 
@@ -658,10 +707,6 @@ class tbptt_file_list_iterator(object):
         tbptt_arr = np.zeros((self.truncation_length + 1, self.batch_size, truncation_items[0].shape[-1]))
         other_seqs_max_lengths = [max([len(other_items[i][j]) for i in range(len(other_items))])
                                        for j in range(len(other_items[i]))]
-        #other_seqs_max_lengths_part = [[len(osjj) for osjj in other_items[jj]] for jj in range(len(other_items))]
-        # assume same number of other_seqs
-        #other_seqs_max_lengths = [max([oso[kk] for oso in other_seqs_max_lengths_part])
-        #                              for kk in range(len(other_seqs_max_lengths_part[0]))]
         other_arrs = [np.zeros((other_seqs_max_lengths[ni], self.batch_size, np.array(other_items[0][ni]).shape[-1]), dtype=np.float32)
                       for ni in range(len(other_items[0]))]
 
@@ -684,6 +729,3 @@ class tbptt_file_list_iterator(object):
             end_result.append(ri_mask)
         end_result.append(r[-1])
         return end_result
-
-
-
