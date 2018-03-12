@@ -15,10 +15,37 @@ from scipy import linalg
 from functools import wraps
 import exceptions
 import subprocess
+import copy
 import shutil
 import xml
 import xml.etree.cElementTree as ElementTree
 import HTMLParser
+import functools
+import operator
+import gzip
+import struct
+import array
+
+from ..core import download
+from ..core import get_logger
+
+logger = get_logger()
+
+
+def get_tfbldr_dataset_dir(dirname=None):
+    lookup_dir = os.getenv("TFBLDR_DATASETS", os.path.join(
+        os.path.expanduser("~"), "tfbldr_datasets"))
+    if not os.path.exists(lookup_dir):
+        logger.info("TFBLDR_DATASETS directory {} not found, creating".format(lookup_dir))
+        os.mkdir(lookup_dir)
+    if dirname is None:
+        return lookup_dir
+
+    subdir = os.path.join(lookup_dir, dirname)
+    if not os.path.exists(subdir):
+        logger.info("TFBLDR_DATASETS subdirectory {} not found, creating".format(subdir))
+        os.mkdir(subdir)
+    return subdir
 
 
 def copytree(src, dst, symlinks=False, ignore=None):
@@ -434,6 +461,194 @@ def fetch_ljspeech(conditioning_type="hybrid"):
     dataset_storage["vocabulary_size"] = len(ljspeech_hybridset)
     dataset_storage["vocabulary"] = translation
     return dataset_storage
+
+
+class IdxDecodeError(ValueError):
+    """Raised when an invalid idx file is parsed."""
+    pass
+
+
+def parse_idx(fd):
+    """
+    Parse an IDX file, and return it as a numpy array.
+    From https://github.com/datapythonista/mnist
+
+    Parameters
+    ----------
+    fd : file
+        File descriptor of the IDX file to parse
+    endian : str
+        Byte order of the IDX file. See [1] for available options
+
+    Returns
+    -------
+    data : numpy.ndarray
+        Numpy array with the dimensions and the data in the IDX file
+    1. https://docs.python.org/3/library/struct.html#byte-order-size-and-alignment
+    """
+    DATA_TYPES = {0x08: 'B',  # unsigned byte
+                  0x09: 'b',  # signed byte
+                  0x0b: 'h',  # short (2 bytes)
+                  0x0c: 'i',  # int (4 bytes)
+                  0x0d: 'f',  # float (4 bytes)
+                  0x0e: 'd'}  # double (8 bytes)
+
+    header = fd.read(4)
+    if len(header) != 4:
+        raise IdxDecodeError('Invalid IDX file, file empty or does not contain a full header.')
+
+    zeros, data_type, num_dimensions = struct.unpack('>HBB', header)
+
+    if zeros != 0:
+        raise IdxDecodeError('Invalid IDX file, file must start with two zero bytes. '
+                             'Found 0x%02x' % zeros)
+
+    try:
+        data_type = DATA_TYPES[data_type]
+    except KeyError:
+        raise IdxDecodeError('Unknown data type 0x%02x in IDX file' % data_type)
+
+    dimension_sizes = struct.unpack('>' + 'I' * num_dimensions,
+                                    fd.read(4 * num_dimensions))
+
+    data = array.array(data_type, fd.read())
+    data.byteswap()  # looks like array.array reads data as little endian
+
+    expected_items = functools.reduce(operator.mul, dimension_sizes)
+    if len(data) != expected_items:
+        raise IdxDecodeError('IDX file has wrong number of items. '
+                             'Expected: %d. Found: %d' % (expected_items, len(data)))
+
+    return np.array(data).reshape(dimension_sizes)
+
+
+def check_fetch_mnist():
+    mnist_dir = get_tfbldr_dataset_dir("mnist")
+    base = "http://yann.lecun.com/exdb/mnist/"
+    zips = [base + "train-images-idx3-ubyte.gz",
+            base + "train-labels-idx1-ubyte.gz",
+            base + "t10k-images-idx3-ubyte.gz",
+            base + "t10k-labels-idx1-ubyte.gz"]
+
+    for z in zips:
+        fname = z.split("/")[-1]
+        full_path = os.path.join(mnist_dir, fname)
+        if not os.path.exists(full_path):
+            logger.info("{} not found, downloading...".format(full_path))
+            download(z, full_path)
+    return mnist_dir
+
+
+def fetch_mnist():
+    """
+    Flattened or image-shaped 28x28 mnist digits with float pixel values in [0 - 255]
+
+    n_samples : 70000
+    n_feature : 784
+
+    Returns
+    -------
+    summary : dict
+        A dictionary cantaining data and image statistics.
+
+        summary["data"] : float32 array, shape (70000, 784)
+        summary["target"] : int32 array, shape (70000,)
+        summary["images"] : float32 array, shape (70000, 28, 28, 1)
+        summary["train_indices"] : int32 array, shape (50000,)
+        summary["valid_indices"] : int32 array, shape (10000,)
+        summary["test_indices"] : int32 array, shape (10000,)
+
+    """
+    data_path = check_fetch_mnist()
+    train_image_gz = "train-images-idx3-ubyte.gz"
+    train_label_gz = "train-labels-idx1-ubyte.gz"
+    test_image_gz = "t10k-images-idx3-ubyte.gz"
+    test_label_gz = "t10k-labels-idx1-ubyte.gz"
+
+    out = []
+    for path in [train_image_gz, train_label_gz, test_image_gz, test_label_gz]:
+        f = gzip.open(os.path.join(data_path, path), 'rb')
+        out.append(parse_idx(f))
+        f.close()
+    train_indices = np.arange(0, 50000)
+    valid_indices = np.arange(50000, 60000)
+    test_indices = np.arange(60000, 70000)
+    data = np.concatenate((out[0], out[2]),
+                          axis=0).astype(np.float32)
+    target = np.concatenate((out[1], out[3]),
+                            axis=0).astype(np.int32)
+    return {"data": copy.deepcopy(data.reshape((data.shape[0], -1))),
+            "target": target,
+            "images": data[..., None],
+            "train_indices": train_indices.astype(np.int32),
+            "valid_indices": valid_indices.astype(np.int32),
+            "test_indices": test_indices.astype(np.int32)}
+
+
+class list_iterator(object):
+    def __init__(self, list_of_iteration_args, batch_size,
+                 one_hot_size=None, random_state=None):
+        """
+        one_hot_size
+        should be either None, or a list of one hot size desired
+        same length as list_of_iteration_args
+
+        list_of_iteration_args = [my_image_data, my_label_data]
+        one_hot_size = [None, 10]
+        """
+        self.list_of_iteration_args = list_of_iteration_args
+        self.batch_size = batch_size
+
+        self.random_state = random_state
+        if random_state is None:
+            raise ValueError("Must pass random state for random selection")
+
+        self.one_hot_size = one_hot_size
+        if one_hot_size is not None:
+            assert len(one_hot_size) == len(list_of_iteration_args)
+
+        iteration_args_lengths = []
+        iteration_args_dims = []
+        for n, ts in enumerate(list_of_iteration_args):
+            c = [(li, np.array(tis).shape) for li, tis in enumerate(ts)]
+            if len(iteration_args_lengths) > 0:
+                assert c[-1][0] == iteration_args_lengths[-1]
+                assert c[-1][1] == iteration_args_dims[-1]
+            iteration_args_lengths.append(c[-1][0] + 1)
+            iteration_args_dims.append(c[-1][1])
+        self.iteration_args_lengths_ = iteration_args_lengths
+        self.iteration_args_dims_ = iteration_args_dims
+
+        # set up the matrices to slice one_hot indexes out of
+        # todo: setup slice functions? or just keep handling in next_batch
+        if one_hot_size is None:
+            self._oh_slicers = [None] * len(list_of_iteration_args)
+        else:
+            self._oh_slicers = []
+            for ooh in one_hot_size:
+                if ooh is None:
+                    self._oh_slicers.append(None)
+                else:
+                    self._oh_slicers.append(np.eye(ooh, dtype=np.float32))
+
+        # set up the indices selected for the first batch
+        self.indices_ = self.random_state.choice(self.iteration_args_lengths_[0],
+                                                 size=(batch_size,), replace=False)
+
+    def next_batch(self):
+        # whether the result is "fresh" or continuation
+        next_batches = []
+        for l in range(len(self.list_of_iteration_args)):
+            if self._oh_slicers[l] is None:
+                t = np.zeros([self.batch_size] + list(self.iteration_args_dims_[l]), dtype=np.float32)
+            else:
+                t = np.zeros([self.batch_size] + list(self.iteration_args_dims_[l])[:-1] + [self._oh_slicers[l].shape[-1]], dtype=np.float32)
+            for bi in range(self.batch_size):
+                t[bi] = self.list_of_iteration_args[l][bi]
+            next_batches.append(t)
+        self.indices_ = self.random_state.choice(self.iteration_args_lengths_[0],
+                                                 size=(self.batch_size,), replace=False)
+        return next_batches
 
 
 class tbptt_list_iterator(object):

@@ -13,22 +13,25 @@ from matplotlib import animation
 #import seaborn
 from collections import namedtuple
 import time
-from tfbldr.datasets import rsync_fetch, fetch_iamondb
+from tfbldr.datasets import rsync_fetch, fetch_ljspeech
 
 parser = argparse.ArgumentParser()
+parser.add_argument('direct_model', nargs=1, default=None)
 parser.add_argument('--model', dest='model_path', type=str, default=None)
 parser.add_argument('--text', dest='text', type=str, default=None)
 parser.add_argument('--bias', dest='bias', type=float, default=1.)
 parser.add_argument('--force', dest='force', action='store_true', default=False)
-parser.add_argument('--noinfo', dest='info', action='store_false', default=True)
-parser.add_argument('--save', dest='save', type=str, default=None)
 parser.add_argument('--seed', dest='seed', type=int, default=1999)
 parser.add_argument('--stop_scale', dest='stop_scale', type=float, default=7.5)
 parser.add_argument('--stop_step', dest='stop_step', type=str, default=None)
-parser.add_argument('--color', dest='color', type=str, default=None)
 args = parser.parse_args()
 if args.model_path == None:
-    raise ValueError("Must pass --model argument, e.g. summary/experiment-0/models/model-7")
+    if args.direct_model == None:
+        raise ValueError("Must pass first positional argument as model, or --model argument, e.g. summary/experiment-0/models/model-7")
+    else:
+        model_path = args.direct_model[0]
+else:
+    model_path = args.model_path
 
 random_state = np.random.RandomState(args.seed)
 
@@ -60,14 +63,17 @@ def cumsum(points):
     return np.concatenate([sums, points[:, 2:]], axis=1)
 
 
-def sample_text(sess, args_text, translation):
-    fields = ['in_coordinates',
-              'in_coordinates_mask',
+def sample_audio(sess, args_text, translation):
+    fields = ['speech',
+              'speech_mask',
+              'in_speech',
+              'in_speech_mask',
+              'out_speech',
+              'out_speech_mask',
               'sequence',
               'sequence_mask',
               'bias',
               'cell_dropout',
-              'e', 'pi', 'mu1', 'mu2', 'std1', 'std2', 'rho',
               'att_w_init', 'att_w',
               'att_k_init', 'att_k',
               'att_h_init', 'att_h',
@@ -76,7 +82,12 @@ def sample_text(sess, args_text, translation):
               'c1_init', 'c1',
               'h2_init', 'h2',
               'c2_init', 'c2',
-              'att_phi']
+              'att_phi'
+              'mean_pred']
+    for name in fields:
+        print(name)
+        tf.get_collection(name)[0]
+
     vs = namedtuple('Params', fields)(
         *[tf.get_collection(name)[0] for name in fields]
     )
@@ -84,6 +95,7 @@ def sample_text(sess, args_text, translation):
     text = np.array([translation.get(c, 0) for c in args_text])
 
     num_letters = len(translation)
+    from IPython import embed; embed(); raise ValueError()
     num_units = 400
     window_mixtures = 10
     output_mixtures = 20
@@ -247,30 +259,27 @@ def sample_text(sess, args_text, translation):
 
 
 def main():
-    iamondb = rsync_fetch(fetch_iamondb, "leto01")
-    translation = iamondb["vocabulary"]
+    ljspeech = rsync_fetch(fetch_ljspeech, "leto01")
+    #iamondb = rsync_fetch(fetch_iamondb, "leto01")
+    translation = ljspeech["vocabulary"]
     #with open(os.path.join('data', 'translation.pkl'), 'rb') as file:
     #    translation = pickle.load(file)
     rev_translation = {v: k for k, v in translation.items()}
 
     charset = [rev_translation[i] for i in range(len(rev_translation))]
-    # just for display purposes - replace <NULL> with ''
-    charset[translation["<NULL>"]] = ""
-    assert translation["<NULL>"] == 0
-
     config = tf.ConfigProto(
         device_count={'GPU': 0}
     )
     with tf.Session(config=config) as sess:
-        saver = tf.train.import_meta_graph(args.model_path + '.meta')
-        saver.restore(sess, args.model_path)
+        saver = tf.train.import_meta_graph(model_path + '.meta')
+        saver.restore(sess, model_path)
 
         if args.text is not None:
             args_text = args.text
         else:
             raise ValueError("Must pass --text argument")
 
-        phi_data, window_data, kappa_data, stroke_data, coords = sample_text(sess, args_text, translation)
+        phi_data, window_data, kappa_data, stroke_data, coords = sample_audio(sess, args_text, translation)
 
         strokes = np.array(stroke_data)
         epsilon = 1e-8
