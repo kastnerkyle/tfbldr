@@ -354,14 +354,14 @@ def VqEmbedding(input_tensor, input_dim, output_dim,
     extender = [None] * (len(ishp) - 1)
     sq_diff = tf.square(input_tensor[..., None] - emb_r.__getitem__(extender))
     sum_sq_diff = tf.reduce_sum(sq_diff, axis=-2)
-    discrete_latent_idx = tf.reduce_min(sum_sq_diff, axis=-1)
+    discrete_latent_idx = tf.argmin(sum_sq_diff, axis=-1)
     shp = _shape(discrete_latent_idx)
     flat_idx = tf.cast(tf.reshape(discrete_latent_idx, (-1,)), tf.int32)
     lu_vectors = tf.nn.embedding_lookup(emb, flat_idx)
     shp2 = _shape(lu_vectors)
     z_q_x = tf.reshape(lu_vectors, (-1, shp[1], shp[2], shp2[-1]))
     z_q_x = tf.identity(z_q_x, name=name_out)
-    return z_q_x, emb
+    return z_q_x, discrete_latent_idx, emb
 
 
 def Embedding(indices, n_symbols, output_dim, random_state=None,
