@@ -313,9 +313,61 @@ def make_numpy_weights(in_dim, out_dims, random_state, init=None,
     return ws
 
 
+def VqEmbedding(input_tensor, input_dim, output_dim,
+                random_state=None, init="embedding_normal",
+                scale="default",
+                strict=None, name=None):
+    if random_state is None:
+        raise ValueError("Must pass instance of np.random.RandomState!")
+    if init != "embedding_normal":
+        raise ValueError("Other init values besides 'embedding_normal' not yet supported, got {}".format(init))
+    if scale != "default":
+        raise ValueError("Scale values besides 'default' not yet supported, got {}".format(scale))
+
+    if name is None:
+        name = _get_name()
+
+    name_w = name + "_vqembedding_w"
+    name_out = name + "_vqembedding_out"
+
+    if strict is None:
+        strict = get_strict_mode_default()
+
+    if strict:
+        cur_defs = get_params_dict()
+        if name_w in cur_defs:
+            raise ValueError("Name {} already created in params dict!".format(name_w))
+
+    try:
+        vectors = _get_shared(name_w)
+    except NameError:
+        logger.info("VqEmbedding layer {} initialized using init {}".format(name, init))
+        embedding_weight, = make_numpy_weights(input_dim, [output_dim],
+                                               random_state, init=init,
+                                               scale=scale)
+        embedding_weight = embedding_weight.transpose(1, 0)
+        emb = tf.Variable(embedding_weight, trainable=True)
+        _set_shared(name_w, emb)
+
+    emb_r = tf.transpose(emb, (1, 0))
+    ishp = _shape(input_tensor)
+    extender = [None] * (len(ishp) - 1)
+    sq_diff = tf.square(input_tensor[..., None] - emb_r.__getitem__(extender))
+    sum_sq_diff = tf.reduce_sum(sq_diff, axis=-2)
+    discrete_latent_idx = tf.reduce_min(sum_sq_diff, axis=-1)
+    shp = _shape(discrete_latent_idx)
+    flat_idx = tf.cast(tf.reshape(discrete_latent_idx, (-1,)), tf.int32)
+    lu_vectors = tf.nn.embedding_lookup(emb, flat_idx)
+    shp2 = _shape(lu_vectors)
+    z_q_x = tf.reshape(lu_vectors, (-1, shp[1], shp[2], shp2[-1]))
+    z_q_x = tf.identity(z_q_x, name=name_out)
+    return z_q_x, emb
+
+
 def Embedding(indices, n_symbols, output_dim, random_state=None,
               init="gaussian",
               strict=None, name=None):
+    raise ValueError("Embedding not yet finalized - return embedded vectors and embed space itself")
     """
     Last dimension of indices tensor must be 1!!!!
     """
@@ -365,7 +417,7 @@ def Embedding(indices, n_symbols, output_dim, random_state=None,
         lu = lu[:, 0]
     else:
         raise ValueError("Input dimension not handled, Embedding input shape {} results in shape {}".format(shp, shape(lu)))
-    return lu
+    return lu, vectors
 
 
 def Linear(list_of_inputs, list_of_input_dims, output_dim, random_state=None,
@@ -472,10 +524,13 @@ def Conv2d(list_of_inputs, list_of_input_dims, num_feature_maps,
 
     weight_values, = make_numpy_weights((input_channels, input_width, input_height),
                                         [(num_feature_maps, kernel_size[0], kernel_size[1])],
+                                        init=init,
+                                        scale=scale,
                                         random_state=random_state)
     try:
         weight = _get_shared(name_w)
     except NameError:
+        logger.info("Conv2d layer {} initialized using init {}".format(name, init))
         weight = tf.Variable(weight_values, trainable=True, name=name_w)
         _set_shared(name_w, weight)
 
@@ -519,6 +574,113 @@ def Conv2d(list_of_inputs, list_of_input_dims, num_feature_maps,
     return out
 
 
+def ConvTranspose2d(list_of_inputs, list_of_input_dims, num_feature_maps,
+                    kernel_size=(3, 3),
+                    strides=None,
+                    border_mode="same",
+                    init=None, scale="default",
+                    biases=True, bias_offset=0.,
+                    name=None, random_state=None, strict=None):
+    if name is None:
+        name = _get_name()
+
+    if random_state is None:
+        raise ValueError("Must pass instance of np.random.RandomState!")
+
+    if strides is None:
+        raise ValueError("Conv2dTranspose is nearly always used with strides > 1!")
+
+    if strides != [1, 1, 1, 1]:
+        try:
+            int(strides)
+            strides = [1, int(strides), int(strides), 1]
+        except:
+            raise ValueError("Changing strides by non-int not yet supported")
+
+    input_t = tf.concat(list_of_inputs, axis=-1)
+    input_channels = sum(list_of_input_dims)
+    input_height = _shape(input_t)[1]
+    input_width = _shape(input_t)[2]
+
+    name_w = name + "_convtranspose2d_w"
+    name_b = name + "_convtranspose2d_b"
+    name_out = name + "_convtranspose2d_out"
+    if strict is None:
+        strict = get_strict_mode_default()
+
+    if strict:
+        cur_defs = get_params_dict()
+        if name_w in cur_defs:
+            raise ValueError("Name {} already created in params dict!".format(name_w))
+
+        if name_b in cur_defs:
+            raise ValueError("Name {} already created in params dict!".format(name_b))
+
+    weight_values, = make_numpy_weights((input_channels, input_width, input_height),
+                                        [(num_feature_maps, kernel_size[0], kernel_size[1])],
+                                        init=init,
+                                        scale=scale,
+                                        random_state=random_state)
+    # transpose out and in to match transpose behavior
+    # TODO: does this also change init scales?
+    weight_values = weight_values.transpose(0, 1, 3, 2)
+    try:
+        weight = _get_shared(name_w)
+    except NameError:
+        logger.info("ConvTranspose2d layer {} initialized using init {}".format(name, init))
+        weight = tf.Variable(weight_values, trainable=True, name=name_w)
+        _set_shared(name_w, weight)
+
+    if border_mode == "same":
+        pad = "SAME"
+    elif border_mode == "valid":
+        pad = "VALID"
+    else:
+        try:
+            int(border_mode)
+            new_pad = [0, int(border_mode), int(border_mode), 0]
+        except:
+            try:
+                # assume it is a custom list border pad
+                # https://stackoverflow.com/questions/37659538/custom-padding-for-convolutions-in-tensorflow
+                new_pad = [int(bi) for bi in border_mode]
+            except:
+                raise ValueError("Unknown border_mode {} specified".format(border_mode))
+
+        assert len(new_pad) == 4
+        """
+        input_t = tf.pad(input_t, [[new_pad[0]] * 2,
+                                   [new_pad[1]] * 2,
+                                   [new_pad[2]] * 2,
+                                   [new_pad[3]] * 2], "CONSTANT")
+        """
+        pad = "SAME"
+
+    shp = _shape(input_t)
+    btch_sz = shp[0]
+    # calcs from PyTorch docs
+    output_shape = tf.stack([btch_sz,
+                            (input_height - 1) * strides[1] - 2 * new_pad[1] + kernel_size[0],
+                            (input_width - 1) * strides[2] - 2 * new_pad[2] + kernel_size[1],
+                            num_feature_maps])
+    out = tf.nn.conv2d_transpose(input_t, weight, output_shape, strides, padding=pad)
+
+    if biases:
+        if (init is None) or (type(init) is str):
+            b, = make_numpy_biases([num_feature_maps])
+        else:
+            b = init[1]
+        b = b + bias_offset
+        try:
+            biases = _get_shared(name_b)
+        except NameError:
+            biases = tf.Variable(b, trainable=True, name=name_b)
+            _set_shared(name_b, biases)
+        out = out + biases[None, None, None]
+    out = tf.identity(out, name=name_out)
+    return out
+
+
 def BatchNorm2d(input_tensor, train_test_flag,
                 gamma_init=1., beta_init=0.,
                 decay=0.9,
@@ -526,6 +688,7 @@ def BatchNorm2d(input_tensor, train_test_flag,
                 affine=True,
                 strict=None,
                 name=None):
+    # https://r2rt.com/implementing-batch-normalization-in-tensorflow.html
     if name is None:
         name = _get_name()
 
@@ -994,3 +1157,15 @@ def BernoulliAndCorrelatedGMMCost(
     nll = -tf.log(rp + 1E-8) - tf.log(ep + 1E-8)
     nll = tf.reshape(nll, (-1, batch_size))
     return nll
+
+
+def BernoulliCrossEntropyCost(predicted, target, eps=1E-8):
+    shpp = _shape(predicted)
+    shpt = _shape(target)
+    for i in range(len(shpp)):
+        if shpt[i] != -1 and shpt[i] != shpp[i]:
+            raise ValueError("Shape mismatch between predicted {} and target {}".format(shpp, shpt))
+    if shpt[-1] != 1 and shpp[-1] != 1:
+        raise ValueError("Shape last dimension must be 1, got predicted {} and target {}".format(shpp, shpt))
+    ep = target * tf.log(predicted + eps) + (1. - target) * tf.log(1. - predicted + eps)
+    return ep
