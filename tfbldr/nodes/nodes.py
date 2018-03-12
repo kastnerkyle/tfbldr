@@ -657,13 +657,15 @@ def ConvTranspose2d(list_of_inputs, list_of_input_dims, num_feature_maps,
         pad = "SAME"
 
     shp = _shape(input_t)
-    btch_sz = shp[0]
+    btch_sz = tf.shape(input_t)[0]
     # calcs from PyTorch docs
     output_shape = tf.stack([btch_sz,
                             (input_height - 1) * strides[1] - 2 * new_pad[1] + kernel_size[0],
                             (input_width - 1) * strides[2] - 2 * new_pad[2] + kernel_size[1],
                             num_feature_maps])
     out = tf.nn.conv2d_transpose(input_t, weight, output_shape, strides, padding=pad)
+    # reshape not needed in 1.4
+    #out = tf.reshape(out, shp)
 
     if biases:
         if (init is None) or (type(init) is str):

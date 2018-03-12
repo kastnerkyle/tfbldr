@@ -69,19 +69,6 @@ def create_decoder(latent, bn_flag):
 def create_vqvae(inp, bn):
     z_e_x = create_encoder(inp, bn)
     z_q_x, z_i_x, emb = VqEmbedding(z_e_x, 64, 512, random_state=random_state, name="embed")
-    """
-    embedding_weight = random_state.randn(512, 64).astype(np.float32)
-    emb = tf.Variable(embedding_weight, trainable=True)
-    emb_r = tf.transpose(emb, (1, 0))
-    sq_diff = tf.square(z_e_x[..., None] - emb_r[None, None, None])
-    sum_sq_diff = tf.reduce_sum(sq_diff, axis=-2)
-    discrete_latent_idx = tf.reduce_min(sum_sq_diff, axis=-1)
-    shp = _shape(discrete_latent_idx)
-    flat_idx = tf.cast(tf.reshape(discrete_latent_idx, (-1,)), tf.int32)
-    lu_vectors = tf.nn.embedding_lookup(emb, flat_idx)
-    shp2 = _shape(lu_vectors)
-    z_q_x = tf.reshape(lu_vectors, (-1, shp[1], shp[2], shp2[-1]))
-    """
     x_tilde = create_decoder(z_q_x, bn)
     return x_tilde, z_e_x, z_q_x, z_i_x, emb
 
@@ -133,18 +120,22 @@ def create_graph():
     return graph, train_model
 
 g, vs = create_graph()
+"""
 with tf.Session(graph=g) as sess:
     sess.run(tf.global_variables_initializer())
     a = np.random.randn(10, 28, 28, 1)
-    feed = {vs.images: a}
-    outs = [vs.z_e_x, vs.z_q_x, vs.z_i_x]
-    #outs = [vs.loss, vs.train_step]
-    r = sess.run(outs, feed_dict=feed)
-    from IPython import embed; embed(); raise ValueError()
-    l = r[0]
-    step = r[1]
+    for i in range(10000):
+        feed = {vs.images: a}
+        #outs = [vs.z_e_x, vs.z_q_x, vs.z_i_x]
+        outs = [vs.loss, vs.train_step]
+        r = sess.run(outs, feed_dict=feed)
+        l = r[0]
+        step = r[1]
+        print(l)
+"""
 
 def loop(sess, itr, extras, stateful_args):
+
     a = np.random.randn(10, 28, 28, 1)
     feed = {vs.images: a}
     outs = [vs.loss, vs.train_step]
