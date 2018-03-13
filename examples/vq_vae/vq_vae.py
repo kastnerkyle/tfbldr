@@ -14,7 +14,9 @@ import numpy as np
 from collections import namedtuple
 
 mnist = fetch_mnist()
-image_data = mnist["images"]
+image_data = mnist["images"] / 255.
+# save last 10k to test on
+image_data = image_data[:-10000]
 itr_random_state = np.random.RandomState(1122)
 itr = list_iterator([image_data], 64, random_state=itr_random_state)
 
@@ -80,9 +82,12 @@ def create_graph():
         images = tf.placeholder(tf.float32, shape=[None, 28, 28, 1])
         bn_flag = tf.placeholder_with_default(tf.zeros(shape=[]), shape=[])
         x_tilde, z_e_x, z_q_x, z_i_x, z_emb = create_vqvae(images, bn_flag)
-        rec_loss = tf.reduce_mean(BernoulliCrossEntropyCost(x_tilde, images))
-        vq_loss = tf.reduce_mean(tf.square(tf.stop_gradient(z_e_x) - z_q_x))
-        commit_loss = tf.reduce_mean(tf.square(z_e_x - tf.stop_gradient(z_q_x)))
+        #rec_loss = tf.reduce_mean(BernoulliCrossEntropyCost(x_tilde, images))
+        #vq_loss = tf.reduce_mean(tf.square(tf.stop_gradient(z_e_x) - z_q_x))
+        #commit_loss = tf.reduce_mean(tf.square(z_e_x - tf.stop_gradient(z_q_x)))
+        rec_loss = tf.reduce_mean(tf.reduce_sum(BernoulliCrossEntropyCost(x_tilde, images), axis=[1, 2]))
+        vq_loss = tf.reduce_mean(tf.reduce_sum(tf.square(tf.stop_gradient(z_e_x) - z_q_x), axis=[1, 2, 3]))
+        commit_loss = tf.reduce_mean(tf.reduce_sum(tf.square(z_e_x - tf.stop_gradient(z_q_x)), axis=[1, 2, 3]))
         beta = 0.25
         loss = rec_loss + beta * vq_loss + beta * commit_loss
         params = get_params_dict()
@@ -120,6 +125,9 @@ def create_graph():
                  loss,
                  rec_loss,
                  train_step]
+    assert len(things_names) == len(things_tf)
+    for tn, tt in zip(things_names, things_tf):
+        graph.add_to_collection(tn, tt)
     train_model = namedtuple('Model', things_names)(*things_tf)
     return graph, train_model
 
@@ -127,7 +135,8 @@ g, vs = create_graph()
 
 def loop(sess, itr, extras, stateful_args):
     x, = itr.next_batch()
-    feed = {vs.images: x}
+    feed = {vs.images: x,
+            vs.bn_flag: 0.}
     outs = [vs.rec_loss, vs.loss, vs.train_step]
     r = sess.run(outs, feed_dict=feed)
     l = r[0]

@@ -541,7 +541,7 @@ def check_fetch_mnist():
 
 def fetch_mnist():
     """
-    Flattened or image-shaped 28x28 mnist digits with pixel values in [0 - 1]
+    Flattened or image-shaped 28x28 mnist digits with float pixel values in [0 - 255]
 
     n_samples : 70000
     n_feature : 784
@@ -643,6 +643,8 @@ class list_iterator(object):
                 t = np.zeros([self.batch_size] + list(self.iteration_args_dims_[l]), dtype=np.float32)
             else:
                 t = np.zeros([self.batch_size] + list(self.iteration_args_dims_[l])[:-1] + [self._oh_slicers[l].shape[-1]], dtype=np.float32)
+            for bi in range(self.batch_size):
+                t[bi] = self.list_of_iteration_args[l][bi]
             next_batches.append(t)
         self.indices_ = self.random_state.choice(self.iteration_args_lengths_[0],
                                                  size=(self.batch_size,), replace=False)

@@ -687,7 +687,6 @@ def BatchNorm2d(input_tensor, train_test_flag,
                 gamma_init=1., beta_init=0.,
                 decay=0.9,
                 eps=1E-3,
-                affine=True,
                 strict=None,
                 name=None):
     # https://r2rt.com/implementing-batch-normalization-in-tensorflow.html
@@ -1170,4 +1169,4 @@ def BernoulliCrossEntropyCost(predicted, target, eps=1E-8):
     if shpt[-1] != 1 and shpp[-1] != 1:
         raise ValueError("Shape last dimension must be 1, got predicted {} and target {}".format(shpp, shpt))
     ep = target * tf.log(predicted + eps) + (1. - target) * tf.log(1. - predicted + eps)
-    return -ep
+    return -tf.reduce_sum(ep, axis=-1)
