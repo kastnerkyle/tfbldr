@@ -1170,4 +1170,4 @@ def BernoulliCrossEntropyCost(predicted, target, eps=1E-8):
     if shpt[-1] != 1 and shpp[-1] != 1:
         raise ValueError("Shape last dimension must be 1, got predicted {} and target {}".format(shpp, shpt))
     ep = target * tf.log(predicted + eps) + (1. - target) * tf.log(1. - predicted + eps)
-    return ep
+    return -ep

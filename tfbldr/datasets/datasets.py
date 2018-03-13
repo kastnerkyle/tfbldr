@@ -585,6 +585,70 @@ def fetch_mnist():
             "test_indices": test_indices.astype(np.int32)}
 
 
+class list_iterator(object):
+    def __init__(self, list_of_iteration_args, batch_size,
+                 one_hot_size=None, random_state=None):
+        """
+        one_hot_size
+        should be either None, or a list of one hot size desired
+        same length as list_of_iteration_args
+
+        list_of_iteration_args = [my_image_data, my_label_data]
+        one_hot_size = [None, 10]
+        """
+        self.list_of_iteration_args = list_of_iteration_args
+        self.batch_size = batch_size
+
+        self.random_state = random_state
+        if random_state is None:
+            raise ValueError("Must pass random state for random selection")
+
+        self.one_hot_size = one_hot_size
+        if one_hot_size is not None:
+            assert len(one_hot_size) == len(list_of_iteration_args)
+
+        iteration_args_lengths = []
+        iteration_args_dims = []
+        for n, ts in enumerate(list_of_iteration_args):
+            c = [(li, np.array(tis).shape) for li, tis in enumerate(ts)]
+            if len(iteration_args_lengths) > 0:
+                assert c[-1][0] == iteration_args_lengths[-1]
+                assert c[-1][1] == iteration_args_dims[-1]
+            iteration_args_lengths.append(c[-1][0] + 1)
+            iteration_args_dims.append(c[-1][1])
+        self.iteration_args_lengths_ = iteration_args_lengths
+        self.iteration_args_dims_ = iteration_args_dims
+
+        # set up the matrices to slice one_hot indexes out of
+        # todo: setup slice functions? or just keep handling in next_batch
+        if one_hot_size is None:
+            self._oh_slicers = [None] * len(list_of_iteration_args)
+        else:
+            self._oh_slicers = []
+            for ooh in one_hot_size:
+                if ooh is None:
+                    self._oh_slicers.append(None)
+                else:
+                    self._oh_slicers.append(np.eye(ooh, dtype=np.float32))
+
+        # set up the indices selected for the first batch
+        self.indices_ = self.random_state.choice(self.iteration_args_lengths_[0],
+                                                 size=(batch_size,), replace=False)
+
+    def next_batch(self):
+        # whether the result is "fresh" or continuation
+        next_batches = []
+        for l in range(len(self.list_of_iteration_args)):
+            if self._oh_slicers[l] is None:
+                t = np.zeros([self.batch_size] + list(self.iteration_args_dims_[l]), dtype=np.float32)
+            else:
+                t = np.zeros([self.batch_size] + list(self.iteration_args_dims_[l])[:-1] + [self._oh_slicers[l].shape[-1]], dtype=np.float32)
+            next_batches.append(t)
+        self.indices_ = self.random_state.choice(self.iteration_args_lengths_[0],
+                                                 size=(self.batch_size,), replace=False)
+        return next_batches
+
+
 class tbptt_list_iterator(object):
     def __init__(self, tbptt_seqs, list_of_other_seqs, batch_size,
                  truncation_length,

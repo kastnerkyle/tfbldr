@@ -6,17 +6,19 @@ from tfbldr.nodes import BatchNorm2d
 from tfbldr.nodes import ReLU
 from tfbldr.nodes import Sigmoid
 from tfbldr.nodes import BernoulliCrossEntropyCost
+from tfbldr.datasets import list_iterator
 from tfbldr import get_params_dict
 from tfbldr import run_loop
 import tensorflow as tf
 import numpy as np
 from collections import namedtuple
 
-"""
 mnist = fetch_mnist()
-"""
-random_state = np.random.RandomState(1999)
+image_data = mnist["images"]
+itr_random_state = np.random.RandomState(1122)
+itr = list_iterator([image_data], 64, random_state=itr_random_state)
 
+random_state = np.random.RandomState(1999)
 l1_dim = (16, 4, 4, 2)
 l2_dim = (32, 4, 4, 2)
 l3_dim = (64, 1, 1, 1)
@@ -82,7 +84,7 @@ def create_graph():
         vq_loss = tf.reduce_mean(tf.square(tf.stop_gradient(z_e_x) - z_q_x))
         commit_loss = tf.reduce_mean(tf.square(z_e_x - tf.stop_gradient(z_q_x)))
         beta = 0.25
-        loss = rec_loss + vq_loss + beta * commit_loss
+        loss = rec_loss + beta * vq_loss + beta * commit_loss
         params = get_params_dict()
 
         enc_params = [params[k] for k in params.keys() if "enc" in k]
@@ -106,6 +108,7 @@ def create_graph():
                     "z_i_x",
                     "z_emb",
                     "loss",
+                    "rec_loss",
                     "train_step"]
     things_tf = [images,
                  bn_flag,
@@ -115,40 +118,27 @@ def create_graph():
                  z_i_x,
                  z_emb,
                  loss,
+                 rec_loss,
                  train_step]
     train_model = namedtuple('Model', things_names)(*things_tf)
     return graph, train_model
 
 g, vs = create_graph()
-"""
-with tf.Session(graph=g) as sess:
-    sess.run(tf.global_variables_initializer())
-    a = np.random.randn(10, 28, 28, 1)
-    for i in range(10000):
-        feed = {vs.images: a}
-        #outs = [vs.z_e_x, vs.z_q_x, vs.z_i_x]
-        outs = [vs.loss, vs.train_step]
-        r = sess.run(outs, feed_dict=feed)
-        l = r[0]
-        step = r[1]
-        print(l)
-"""
 
 def loop(sess, itr, extras, stateful_args):
-
-    a = np.random.randn(10, 28, 28, 1)
-    feed = {vs.images: a}
-    outs = [vs.loss, vs.train_step]
+    x, = itr.next_batch()
+    feed = {vs.images: x}
+    outs = [vs.rec_loss, vs.loss, vs.train_step]
     r = sess.run(outs, feed_dict=feed)
     l = r[0]
-    step = r[1]
+    t_l = r[1]
+    step = r[2]
     return l, None, stateful_args
 
 with tf.Session(graph=g) as sess:
     run_loop(sess,
-             loop, {},
-             loop, {},
-             n_steps=5,
-             n_train_steps_per=5,
+             loop, itr,
+             loop, itr,
+             n_steps=25000,
+             n_train_steps_per=1000,
              n_valid_steps_per=0)
-from IPython import embed; embed(); raise ValueError()
