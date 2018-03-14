@@ -15,10 +15,13 @@ from collections import namedtuple
 
 mnist = fetch_mnist()
 image_data = mnist["images"] / 255.
-# save last 10k to test on
-image_data = image_data[:-10000]
-itr_random_state = np.random.RandomState(1122)
-itr = list_iterator([image_data], 64, random_state=itr_random_state)
+# save last 10k to validate on
+train_image_data = image_data[:-10000]
+val_image_data = image_data[-10000:]
+train_itr_random_state = np.random.RandomState(1122)
+val_itr_random_state = np.random.RandomState(1)
+train_itr = list_iterator([train_image_data], 64, random_state=train_itr_random_state)
+val_itr = list_iterator([val_image_data], 64, random_state=val_itr_random_state)
 
 random_state = np.random.RandomState(1999)
 l1_dim = (16, 4, 4, 2)
@@ -82,14 +85,14 @@ def create_graph():
         images = tf.placeholder(tf.float32, shape=[None, 28, 28, 1])
         bn_flag = tf.placeholder_with_default(tf.zeros(shape=[]), shape=[])
         x_tilde, z_e_x, z_q_x, z_i_x, z_emb = create_vqvae(images, bn_flag)
-        #rec_loss = tf.reduce_mean(BernoulliCrossEntropyCost(x_tilde, images))
-        #vq_loss = tf.reduce_mean(tf.square(tf.stop_gradient(z_e_x) - z_q_x))
-        #commit_loss = tf.reduce_mean(tf.square(z_e_x - tf.stop_gradient(z_q_x)))
-        rec_loss = tf.reduce_mean(tf.reduce_sum(BernoulliCrossEntropyCost(x_tilde, images), axis=[1, 2]))
-        vq_loss = tf.reduce_mean(tf.reduce_sum(tf.square(tf.stop_gradient(z_e_x) - z_q_x), axis=[1, 2, 3]))
-        commit_loss = tf.reduce_mean(tf.reduce_sum(tf.square(z_e_x - tf.stop_gradient(z_q_x)), axis=[1, 2, 3]))
+        rec_loss = tf.reduce_mean(BernoulliCrossEntropyCost(x_tilde, images))
+        vq_loss = tf.reduce_mean(tf.square(tf.stop_gradient(z_e_x) - z_q_x))
+        commit_loss = tf.reduce_mean(tf.square(z_e_x - tf.stop_gradient(z_q_x)))
+        #rec_loss = tf.reduce_mean(tf.reduce_sum(BernoulliCrossEntropyCost(x_tilde, images), axis=[1, 2]))
+        #vq_loss = tf.reduce_mean(tf.reduce_sum(tf.square(tf.stop_gradient(z_e_x) - z_q_x), axis=[1, 2, 3]))
+        #commit_loss = tf.reduce_mean(tf.reduce_sum(tf.square(z_e_x - tf.stop_gradient(z_q_x)), axis=[1, 2, 3]))
         beta = 0.25
-        loss = rec_loss + beta * vq_loss + beta * commit_loss
+        loss = rec_loss + vq_loss + beta * commit_loss
         params = get_params_dict()
 
         enc_params = [params[k] for k in params.keys() if "enc" in k]
@@ -97,11 +100,13 @@ def create_graph():
         emb_params = [params[k] for k in params.keys() if "embed" in k]
 
         dec_grads = list(zip(tf.gradients(loss, dec_params), dec_params))
+        # scaled loss by alpha, but crank up vq loss grad
+        # like having a higher lr only on embeds
         embed_grads = list(zip(tf.gradients(vq_loss, emb_params), emb_params))
         grad_z = tf.gradients(rec_loss, z_q_x)
-        enc_grads = [(tf.gradients(z_e_x, p, grad_z)[0] + beta * tf.gradients(commit_loss, p)[0], p) for p in enc_params]
+        enc_grads = [(tf.gradients(z_e_x, p, grad_z)[0] + tf.gradients(beta * commit_loss, p)[0], p) for p in enc_params]
 
-        learning_rate = 0.001
+        learning_rate = 0.0002
         optimizer = tf.train.AdamOptimizer(learning_rate, use_locking=True)
         train_step = optimizer.apply_gradients(dec_grads + enc_grads + embed_grads)
 
@@ -135,19 +140,26 @@ g, vs = create_graph()
 
 def loop(sess, itr, extras, stateful_args):
     x, = itr.next_batch()
-    feed = {vs.images: x,
-            vs.bn_flag: 0.}
-    outs = [vs.rec_loss, vs.loss, vs.train_step]
-    r = sess.run(outs, feed_dict=feed)
-    l = r[0]
-    t_l = r[1]
-    step = r[2]
+    if extras["train"]:
+        feed = {vs.images: x,
+                vs.bn_flag: 0.}
+        outs = [vs.rec_loss, vs.loss, vs.train_step]
+        r = sess.run(outs, feed_dict=feed)
+        l = r[0]
+        t_l = r[1]
+        step = r[2]
+    else:
+        feed = {vs.images: x,
+                vs.bn_flag: 1.}
+        outs = [vs.rec_loss]
+        r = sess.run(outs, feed_dict=feed)
+        l = r[0]
     return l, None, stateful_args
 
 with tf.Session(graph=g) as sess:
     run_loop(sess,
-             loop, itr,
-             loop, itr,
-             n_steps=25000,
+             loop, train_itr,
+             loop, val_itr,
+             n_steps=3500,
              n_train_steps_per=1000,
-             n_valid_steps_per=0)
+             n_valid_steps_per=1000)

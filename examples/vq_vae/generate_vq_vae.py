@@ -48,11 +48,11 @@ with tf.Session(config=config) as sess:
         o_x_i = x[i]
         r_x_i = x_rec[i]
         f, axarr = plt.subplots(1, 3)
-        axarr[0].imshow(o_x_i[:, :, 0], cmap="gray")
+        axarr[0].imshow(o_x_i[:, :, 0], cmap="gray", interpolation=None)
         axarr[0].set_title("GT")
-        axarr[1].imshow(r_x_i[:, :, 0], cmap="gray")
+        axarr[1].imshow(r_x_i[:, :, 0], cmap="gray", interpolation=None)
         axarr[1].set_title("REC")
-        axarr[2].imshow(np.abs(r_x_i[:, :, 0] - o_x_i[:, :, 0]), cmap="gray")
+        axarr[2].imshow(np.abs(r_x_i[:, :, 0] - o_x_i[:, :, 0]), cmap="gray", interpolation=None)
         axarr[2].set_title("ABS DIFF REC")
         plt.savefig("vq_{}".format(i))
         plt.close()
