@@ -16,19 +16,20 @@ import time
 from tfbldr.datasets import rsync_fetch, fetch_iamondb
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--model', dest='model_path', type=str, default=None)
+parser.add_argument('direct_model', nargs=1, default=None)
 parser.add_argument('--text', dest='text', type=str, default=None)
 parser.add_argument('--bias', dest='bias', type=float, default=1.)
 parser.add_argument('--force', dest='force', action='store_true', default=False)
 parser.add_argument('--noinfo', dest='info', action='store_false', default=True)
-parser.add_argument('--save', dest='save', type=str, default=None)
 parser.add_argument('--seed', dest='seed', type=int, default=1999)
 parser.add_argument('--stop_scale', dest='stop_scale', type=float, default=7.5)
 parser.add_argument('--stop_step', dest='stop_step', type=str, default=None)
 parser.add_argument('--color', dest='color', type=str, default=None)
 args = parser.parse_args()
-if args.model_path == None:
+
+if args.direct_model == None:
     raise ValueError("Must pass --model argument, e.g. summary/experiment-0/models/model-7")
+direct_model = args.direct_model[0]
 
 random_state = np.random.RandomState(args.seed)
 
@@ -262,8 +263,8 @@ def main():
         device_count={'GPU': 0}
     )
     with tf.Session(config=config) as sess:
-        saver = tf.train.import_meta_graph(args.model_path + '.meta')
-        saver.restore(sess, args.model_path)
+        saver = tf.train.import_meta_graph(direct_model + '.meta')
+        saver.restore(sess, direct_model)
 
         if args.text is not None:
             args_text = args.text

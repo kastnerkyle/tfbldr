@@ -6,6 +6,8 @@
 
 # License: 3-clause BSD
 
+# still doesn't fix anything...
+export TF_CPP_MIN_LOG_LEVEL=3
 set -e
 
 python --version

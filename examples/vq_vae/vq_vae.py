@@ -76,7 +76,8 @@ def create_decoder(latent, bn_flag):
 
 def create_vqvae(inp, bn):
     z_e_x = create_encoder(inp, bn)
-    z_q_x, z_i_x, emb = VqEmbedding(z_e_x, l_dims[-1][0], embedding_dim, random_state=random_state, name="embed")
+    z_st_q_x, z_i_x, z_nst_q_x, emb = VqEmbedding(z_e_x, l_dims[-1][0], embedding_dim, random_state=random_state, name="embed")
+    z_q_x = z_nst_q_x
     x_tilde = create_decoder(z_q_x, bn)
     return x_tilde, z_e_x, z_q_x, z_i_x, emb
 
@@ -161,6 +162,6 @@ with tf.Session(graph=g) as sess:
     run_loop(sess,
              loop, train_itr,
              loop, val_itr,
-             n_steps=4000,
+             n_steps=10000,
              n_train_steps_per=1000,
              n_valid_steps_per=1000)
