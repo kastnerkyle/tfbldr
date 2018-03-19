@@ -12,6 +12,8 @@ import pickle
 import numpy as np
 import fnmatch
 from scipy import linalg
+from scipy.io import wavfile
+from scipy import fftpack
 from functools import wraps
 import exceptions
 import subprocess
@@ -25,6 +27,7 @@ import operator
 import gzip
 import struct
 import array
+from .audio_tools import stft
 
 from ..core import download
 from ..core import get_logger
@@ -583,6 +586,49 @@ def fetch_mnist():
             "train_indices": train_indices.astype(np.int32),
             "valid_indices": valid_indices.astype(np.int32),
             "test_indices": test_indices.astype(np.int32)}
+
+
+def check_fetch_fruitspeech():
+    """ Check for fruitspeech data
+
+    Recorded by Hakon Sandsmark
+    """
+    url = "https://raw.githubusercontent.com/kastnerkyle/fruitspeech_dataset/master/fruitspeech.tar.gz"
+    partial_path = get_tfbldr_dataset_dir("fruitspeech")
+    full_path = os.path.join(partial_path, "fruitspeech.tar.gz")
+    if not os.path.exists(partial_path):
+        os.makedirs(partial_path)
+    if not os.path.exists(full_path):
+        download(url, full_path, progress_update_percentage=1)
+    audio_path = os.path.join(partial_path, "fruitspeech")
+    if not os.path.exists(audio_path):
+        tar = tarfile.open(full_path)
+        os.chdir(partial_path)
+        tar.extractall()
+        tar.close()
+    return audio_path
+
+
+def fetch_fruitspeech(fftsize=128, step="half", mean_normalize=True,
+                      real=False, compute_onesided=True):
+    audio_path = check_fetch_fruitspeech()
+    files = sorted([audio_path + os.sep + f for f in os.listdir(audio_path) if f.endswith(".wav")])
+    specgrams = []
+    raws = []
+    words = []
+    for wav_path in files:
+        fs, d = wavfile.read(wav_path)
+        d = d.astype("float32")
+        Pxx = 20. * np.log10(np.abs(stft(d, fftsize=fftsize, step=step, mean_normalize=mean_normalize, real=real, compute_onesided=compute_onesided)))
+        word = wav_path.split(os.sep)[-1].split("_")[0]
+        specgrams.append(Pxx)
+        raws.append(d)
+        words.append(word)
+    out = {}
+    out["specgrams"] = specgrams
+    out["data"] = raws
+    out["target"] = words
+    return out
 
 
 class list_iterator(object):
