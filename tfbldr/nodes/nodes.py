@@ -294,7 +294,7 @@ def make_numpy_weights(in_dim, out_dims, random_state, init=None,
             fs[i] = 0.075
         elif init == "embedding_normal":
             ff[i] = np_truncated_normal
-            fs[i] = 1. / np.sqrt(in_dim)
+            fs[i] = 1. / np.sqrt(out_dim)
         else:
             raise ValueError("Unknown init type %s" % init)
 

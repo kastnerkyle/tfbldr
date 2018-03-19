@@ -27,6 +27,7 @@ random_state = np.random.RandomState(1999)
 l1_dim = (16, 4, 4, 2)
 l2_dim = (32, 4, 4, 2)
 l3_dim = (64, 1, 1, 1)
+embedding_dim = 512
 l_dims = [l1_dim, l2_dim, l3_dim]
 stride_div = np.prod([ld[-1] for ld in l_dims])
 bpad = 1
@@ -75,7 +76,7 @@ def create_decoder(latent, bn_flag):
 
 def create_vqvae(inp, bn):
     z_e_x = create_encoder(inp, bn)
-    z_q_x, z_i_x, emb = VqEmbedding(z_e_x, 64, 512, random_state=random_state, name="embed")
+    z_q_x, z_i_x, emb = VqEmbedding(z_e_x, l_dims[-1][0], embedding_dim, random_state=random_state, name="embed")
     x_tilde = create_decoder(z_q_x, bn)
     return x_tilde, z_e_x, z_q_x, z_i_x, emb
 
@@ -160,6 +161,6 @@ with tf.Session(graph=g) as sess:
     run_loop(sess,
              loop, train_itr,
              loop, val_itr,
-             n_steps=3500,
+             n_steps=4000,
              n_train_steps_per=1000,
              n_valid_steps_per=1000)
