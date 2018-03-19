@@ -609,7 +609,7 @@ def check_fetch_fruitspeech():
     return audio_path
 
 
-def fetch_fruitspeech(fftsize=128, step="half", mean_normalize=True,
+def fetch_fruitspeech(fftsize=128, step=8, mean_normalize=True,
                       real=False, compute_onesided=True):
     audio_path = check_fetch_fruitspeech()
     files = sorted([audio_path + os.sep + f for f in os.listdir(audio_path) if f.endswith(".wav")])

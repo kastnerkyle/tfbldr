@@ -13,8 +13,15 @@ import tensorflow as tf
 import numpy as np
 from collections import namedtuple
 
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
 
 fruit = fetch_fruitspeech()
+s = fruit["specgrams"][0]
+plt.imshow(s, interpolation=None)
+plt.savefig("tmp")
 from IPython import embed; embed(); raise ValueError()
 mnist = fetch_mnist()
 image_data = mnist["images"] / 255.
