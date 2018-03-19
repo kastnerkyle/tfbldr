@@ -91,18 +91,18 @@ def print_network(params_dict):
     for k, v in params_dict.items():
         #strip_name = "_".join(k.split("_")[1:])
         strip_name = k
-        shp = tuple(shape(v))
+        shp = tuple(_shape(v))
         k_count = np.prod(shp) / float(1E3)
         logger.info("{} {}, {}K".format(strip_name, shp, k_count))
     params = params_dict.values()
-    n_params = sum([np.prod(shape(p)) for p in params])
+    n_params = sum([np.prod(_shape(p)) for p in params])
     logger.info("---------------------")
     logger.info(" ")
     logger.info("Total: {}M".format(n_params / float(1E6)))
     logger.info("=====================")
 
 
-def shape(x):
+def _shape(x):
     r = x.get_shape().as_list()
     r = [ri if ri != None else -1 for ri in r]
 
@@ -111,15 +111,15 @@ def shape(x):
     return r
 
 
-def ndim(x):
-    return len(shape(x))
+def _ndim(x):
+    return len(_shape(x))
 
 
 def dot(a, b):
     # Generalized dot for nd sequences, assumes last axis is projection
     # b must be rank 2
-    a_tup = shape(a)
-    b_tup = shape(b)
+    a_tup = _shape(a)
+    b_tup = _shape(b)
     if len(a_tup) == 2 and len(b_tup) == 2:
         return tf.matmul(a, b)
     elif len(a_tup) == 3 and len(b_tup) == 2:
