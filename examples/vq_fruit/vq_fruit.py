@@ -7,15 +7,16 @@ from tfbldr.nodes import Sigmoid
 from tfbldr.nodes import Tanh
 from tfbldr.nodes import BernoulliCrossEntropyCost
 from tfbldr.datasets import list_iterator
+from tfbldr.plot import get_viridis
+from tfbldr.plot import autoaspect
+from tfbldr.datasets import fetch_fruitspeech
 from tfbldr import get_params_dict
 from tfbldr import run_loop
-from tfbldr import viridis_cm
-from tfbldr import autoaspect
-from tfbldr.datasets import fetch_fruitspeech
 import tensorflow as tf
 import numpy as np
 from collections import namedtuple, defaultdict
 
+viridis_cm = get_viridis()
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -172,21 +173,13 @@ def create_graph():
         beta = 0.25
         loss = rec_loss + vq_loss + beta * commit_loss
         params = get_params_dict()
+        grads = tf.gradients(loss, params.values())
 
-        enc_params = [params[k] for k in params.keys() if "enc" in k]
-        dec_params = [params[k] for k in params.keys() if "dec" in k]
-        emb_params = [params[k] for k in params.keys() if "embed" in k]
-
-        dec_grads = list(zip(tf.gradients(loss, dec_params), dec_params))
-        # scaled loss by alpha, but crank up vq loss grad
-        # like having a higher lr only on embeds
-        embed_grads = list(zip(tf.gradients(vq_loss, emb_params), emb_params))
-        grad_z = tf.gradients(rec_loss, z_q_x)
-        enc_grads = [(tf.gradients(z_e_x, p, grad_z)[0] + tf.gradients(beta * commit_loss, p)[0], p) for p in enc_params]
-
-        learning_rate = 0.0001
+        learning_rate = 0.0002
         optimizer = tf.train.AdamOptimizer(learning_rate, use_locking=True)
-        train_step = optimizer.apply_gradients(dec_grads + enc_grads + embed_grads)
+        assert len(grads) == len(params)
+        j = [(g, p) for g, p in zip(grads, params.values())]
+        train_step = optimizer.apply_gradients(j)
 
     things_names = ["images",
                     "bn_flag",
