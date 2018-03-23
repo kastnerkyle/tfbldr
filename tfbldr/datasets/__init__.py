@@ -7,5 +7,5 @@ from .loaders import make_sinewaves
 from .iterators import list_iterator
 from .iterators import tbptt_list_iterator
 from .iterators import tbptt_file_list_iterator
-from .audio_tools import soundsc
-from .audio_tools import stft
+from .audio import soundsc
+from .audio import stft

@@ -1,7 +1,6 @@
 from ..datasets import stft
-from .plot import viridis_cm
+from .plot import get_viridis
 import numpy as np
-import matplotlib.pyplot as plt
 
 
 def specgram(arr, fftsize=512, step=16, mean_normalize=True, real=False,
@@ -17,10 +16,13 @@ def specgram(arr, fftsize=512, step=16, mean_normalize=True, real=False,
     return np.clip(Pxx, min_value, max_value)
 
 
-def specplot(arr, mplaxis, time_ratio=4, cmap=viridis_cm):
+def specplot(arr, mplaxis, time_ratio=4, cmap="viridis"):
     """
     assumes arr comes in with time on axis 0, frequency on axis 1
     """
+    import matplotlib.pyplot as plt
+    if cmap == "viridis":
+        cmap = get_viridis()
     # Transpose so time is X axis, and invert y axis so
     # frequency is low at bottom
     mag = arr.T[::-1, :]

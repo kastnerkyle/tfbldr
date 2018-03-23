@@ -316,7 +316,11 @@ def make_numpy_weights(in_dim, out_dims, random_state, init=None,
 def VqEmbedding(input_tensor, input_dim, output_dim,
                 random_state=None, init="embedding_normal",
                 scale="default",
-                strict=None, name=None):
+                strict=None, name=None,
+                use_stop_grad_trick=True):
+    """
+    Will use stop_grad_trick to give a straighthrough estimator for gradient
+    """
     if random_state is None:
         raise ValueError("Must pass instance of np.random.RandomState!")
     if init != "embedding_normal":
@@ -349,17 +353,31 @@ def VqEmbedding(input_tensor, input_dim, output_dim,
         emb = tf.Variable(embedding_weight, trainable=True)
         _set_shared(name_w, emb)
 
-    emb_r = tf.transpose(emb, (1, 0))
-    ishp = _shape(input_tensor)
-    extender = [None] * (len(ishp) - 1)
-    sq_diff = tf.square(input_tensor[..., None] - emb_r.__getitem__(extender))
-    sum_sq_diff = tf.reduce_sum(sq_diff, axis=-2)
-    discrete_latent_idx = tf.argmin(sum_sq_diff, axis=-1)
-    shp = _shape(discrete_latent_idx)
-    flat_idx = tf.cast(tf.reshape(discrete_latent_idx, (-1,)), tf.int32)
-    lu_vectors = tf.nn.embedding_lookup(emb, flat_idx)
-    shp2 = _shape(lu_vectors)
-    z_q_x = tf.reshape(lu_vectors, (-1, shp[1], shp[2], shp2[-1]))
+    def _vqcore(input_tensor, emb):
+        emb_r = tf.transpose(emb, (1, 0))
+        ishp = _shape(input_tensor)
+        extender = [None] * (len(ishp) - 1)
+        sq_diff = tf.square(input_tensor[..., None] - emb_r.__getitem__(extender))
+        sum_sq_diff = tf.reduce_sum(sq_diff, axis=-2)
+        discrete_latent_idx = tf.argmin(sum_sq_diff, axis=-1)
+        shp = _shape(discrete_latent_idx)
+        flat_idx = tf.cast(tf.reshape(discrete_latent_idx, (-1,)), tf.int32)
+        lu_vectors = tf.nn.embedding_lookup(emb, flat_idx)
+        shp2 = _shape(lu_vectors)
+        z_q_x = tf.reshape(lu_vectors, (-1, shp[1], shp[2], shp2[-1]))
+        return z_q_x, discrete_latent_idx
+
+    # More proper ways here
+    # https://uoguelph-mlrg.github.io/tensorflow_gradients/
+    # but stop grad trick works fine for this
+    #https://stackoverflow.com/questions/36456436/how-can-i-define-only-the-gradient-for-a-tensorflow-subgraph/36480182#36480182
+    z_q_x, discrete_latent_idx = _vqcore(input_tensor, emb)
+    if use_stop_grad_trick:
+        # in general for g(x) desired gradient, y = f(x) desired forward
+        # t = g(x)
+        # y = t + tf.stop_gradient(f(x) - t)
+        t = tf.identity(input_tensor)
+        z_q_x = t + tf.stop_gradient(z_q_x - t)
     z_q_x = tf.identity(z_q_x, name=name_out)
     return z_q_x, discrete_latent_idx, emb
 
