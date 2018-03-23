@@ -4,14 +4,17 @@ from tfbldr.nodes import VqEmbedding
 from tfbldr.nodes import BatchNorm2d
 from tfbldr.nodes import ReLU
 from tfbldr.nodes import Sigmoid
+from tfbldr.nodes import Tanh
 from tfbldr.nodes import BernoulliCrossEntropyCost
 from tfbldr.datasets import list_iterator
 from tfbldr import get_params_dict
 from tfbldr import run_loop
+from tfbldr import viridis_cm
+from tfbldr import autoaspect
 from tfbldr.datasets import fetch_fruitspeech
 import tensorflow as tf
 import numpy as np
-from collections import namedtuple
+from collections import namedtuple, defaultdict
 
 import matplotlib
 matplotlib.use("Agg")
@@ -19,69 +22,129 @@ import matplotlib.pyplot as plt
 
 
 fruit = fetch_fruitspeech()
-s = fruit["specgrams"][0]
-plt.imshow(s, interpolation=None)
-plt.savefig("tmp")
-from IPython import embed; embed(); raise ValueError()
-mnist = fetch_mnist()
-image_data = mnist["images"] / 255.
-# save last 10k to validate on
-train_image_data = image_data[:-10000]
-val_image_data = image_data[-10000:]
+minmin = np.inf
+maxmax = -np.inf
+
+for s in fruit["data"]:
+    minmin = min(minmin, s.min())
+    maxmax = max(maxmax, s.max())
+
+train_data = []
+valid_data = []
+type_counts = defaultdict(lambda: 0)
+final_audio = []
+for n, s in enumerate(fruit["data"]):
+    type_counts[fruit["target"][n]] += 1
+    n_s = (s - minmin) / float(maxmax - minmin)
+    n_s = 2 * n_s - 1
+    if type_counts[fruit["target"][n]] == 15:
+        valid_data.append(n_s)
+    else:
+        train_data.append(n_s)
+
+def _cuts(list_of_audio, cut=512, step=512):
+    # make many overlapping cuts
+    # 8k, this means offset is ~4ms @ step of 32
+    real_final = []
+    for s in list_of_audio:
+        # cut off the end
+        s = s[:len(s) - len(s) % step]
+        starts = np.arange(0, len(s) - cut + step, step)
+        for st in starts:
+            real_final.append(s[st:st + cut][None, :, None])
+    return real_final
+
+train_audio = _cuts(train_data)
+valid_audio = _cuts(valid_data)
+
 train_itr_random_state = np.random.RandomState(1122)
-val_itr_random_state = np.random.RandomState(1)
-train_itr = list_iterator([train_image_data], 64, random_state=train_itr_random_state)
-val_itr = list_iterator([val_image_data], 64, random_state=val_itr_random_state)
+valid_itr_random_state = np.random.RandomState(12)
+train_itr = list_iterator([train_audio], 50, random_state=train_itr_random_state)
+valid_itr = list_iterator([valid_audio], 50, random_state=valid_itr_random_state)
 
 random_state = np.random.RandomState(1999)
-l1_dim = (16, 4, 4, 2)
-l2_dim = (32, 4, 4, 2)
-l3_dim = (64, 1, 1, 1)
+l1_dim = (64, 1, 4, [1, 1, 2, 1])
+l2_dim = (128, 1, 4, [1, 1, 2, 1])
+l3_dim = (256, 1, 4, [1, 1, 2, 1])
+l3_dim = (257, 1, 4, [1, 1, 2, 1])
+l4_dim = (256, 1, 4, [1, 1, 2, 1])
+l5_dim = (257, 1, 1, [1, 1, 1, 1])
 embedding_dim = 512
-l_dims = [l1_dim, l2_dim, l3_dim]
+l_dims = [l1_dim, l2_dim, l3_dim, l4_dim, l5_dim]
 stride_div = np.prod([ld[-1] for ld in l_dims])
-bpad = 1
+ebpad = [0, 0, 4 // 2 - 1, 0]
+dbpad = [0, 0, 4 // 2 - 1, 0]
 
 def create_encoder(inp, bn_flag):
     l1 = Conv2d([inp], [1], l_dims[0][0], kernel_size=l_dims[0][1:3], name="enc1",
                 strides=l_dims[0][-1],
-                border_mode=bpad,
+                border_mode=ebpad,
                 random_state=random_state)
     bn_l1 = BatchNorm2d(l1, bn_flag, name="bn_enc1")
     r_l1 = ReLU(bn_l1)
 
     l2 = Conv2d([r_l1], [l_dims[0][0]], l_dims[1][0], kernel_size=l_dims[1][1:3], name="enc2",
                 strides=l_dims[1][-1],
-                border_mode=bpad,
+                border_mode=ebpad,
                 random_state=random_state)
     bn_l2 = BatchNorm2d(l2, bn_flag, name="bn_enc2")
     r_l2 = ReLU(bn_l2)
 
     l3 = Conv2d([r_l2], [l_dims[1][0]], l_dims[2][0], kernel_size=l_dims[2][1:3], name="enc3",
+                strides=l_dims[2][-1],
+                border_mode=ebpad,
                 random_state=random_state)
     bn_l3 = BatchNorm2d(l3, bn_flag, name="bn_enc3")
-    return bn_l3
+    r_l3 = ReLU(bn_l3)
+
+    l4 = Conv2d([r_l3], [l_dims[2][0]], l_dims[3][0], kernel_size=l_dims[3][1:3], name="enc4",
+                strides=l_dims[3][-1],
+                border_mode=ebpad,
+                random_state=random_state)
+    bn_l4 = BatchNorm2d(l4, bn_flag, name="bn_enc4")
+    r_l4 = ReLU(bn_l4)
+
+    l5 = Conv2d([r_l4], [l_dims[3][0]], l_dims[4][0], kernel_size=l_dims[4][1:3], name="enc5",
+                random_state=random_state)
+    bn_l5 = BatchNorm2d(l5, bn_flag, name="bn_enc5")
+    return bn_l5
 
 
 def create_decoder(latent, bn_flag):
-    l1 = Conv2d([latent], [l_dims[2][0]], l_dims[1][0], kernel_size=l_dims[2][1:3], name="dec1",
+    l1 = Conv2d([latent], [l_dims[-1][0]], l_dims[-2][0], kernel_size=l_dims[-1][1:3], name="dec1",
                 random_state=random_state)
-    bn_l1 = BatchNorm2d(l1, bn_flag, name="bn_dec3")
+    bn_l1 = BatchNorm2d(l1, bn_flag, name="bn_dec1")
     r_l1 = ReLU(bn_l1)
 
-    l2 = ConvTranspose2d([r_l1], [l_dims[1][0]], l_dims[0][0], kernel_size=l_dims[1][1:3], name="dec2",
-                         strides=l_dims[1][-1],
-                         border_mode=bpad,
+    l2 = ConvTranspose2d([r_l1], [l_dims[-2][0]], l_dims[-3][0], kernel_size=l_dims[-2][1:3], name="dec2",
+                         strides=l_dims[-2][-1],
+                         border_mode=dbpad,
                          random_state=random_state)
     bn_l2 = BatchNorm2d(l2, bn_flag, name="bn_dec2")
     r_l2 = ReLU(bn_l2)
 
-    l3 = ConvTranspose2d([r_l2], [l_dims[0][0]], 1, kernel_size=l_dims[0][1:3], name="dec3",
-                         strides=l_dims[0][-1],
-                         border_mode=bpad,
+    l3 = ConvTranspose2d([r_l2], [l_dims[-3][0]], l_dims[-4][0], kernel_size=l_dims[-3][1:3], name="dec3",
+                         strides=l_dims[-3][-1],
+                         border_mode=dbpad,
                          random_state=random_state)
-    s_l3 = Sigmoid(l3)
-    return s_l3
+    bn_l3 = BatchNorm2d(l3, bn_flag, name="bn_dec3")
+    r_l3 = ReLU(bn_l3)
+
+    l4 = ConvTranspose2d([r_l3], [l_dims[-4][0]], l_dims[-5][0], kernel_size=l_dims[-4][1:3], name="dec4",
+                         strides=l_dims[-4][-1],
+                         border_mode=dbpad,
+                         random_state=random_state)
+    bn_l4 = BatchNorm2d(l4, bn_flag, name="bn_dec4")
+    r_l4 = ReLU(bn_l4)
+
+
+    l5 = ConvTranspose2d([r_l4], [l_dims[-5][0]], 1, kernel_size=l_dims[-5][1:3], name="dec5",
+                         strides=l_dims[-5][-1],
+                         border_mode=dbpad,
+                         random_state=random_state)
+    #s_l5 = Sigmoid(l5)
+    t_l5 = Tanh(l5)
+    return t_l5
 
 
 def create_vqvae(inp, bn):
@@ -90,13 +153,17 @@ def create_vqvae(inp, bn):
     x_tilde = create_decoder(z_q_x, bn)
     return x_tilde, z_e_x, z_q_x, z_i_x, emb
 
+
 def create_graph():
     graph = tf.Graph()
     with graph.as_default():
-        images = tf.placeholder(tf.float32, shape=[None, 28, 28, 1])
+        images = tf.placeholder(tf.float32, shape=[None, train_audio[0].shape[0],
+                                                   train_audio[0].shape[1],
+                                                   train_audio[0].shape[2]])
         bn_flag = tf.placeholder_with_default(tf.zeros(shape=[]), shape=[])
         x_tilde, z_e_x, z_q_x, z_i_x, z_emb = create_vqvae(images, bn_flag)
-        rec_loss = tf.reduce_mean(BernoulliCrossEntropyCost(x_tilde, images))
+        #rec_loss = tf.reduce_mean(BernoulliCrossEntropyCost(x_tilde, images))
+        rec_loss = tf.reduce_mean(tf.square(x_tilde - images))
         vq_loss = tf.reduce_mean(tf.square(tf.stop_gradient(z_e_x) - z_q_x))
         commit_loss = tf.reduce_mean(tf.square(z_e_x - tf.stop_gradient(z_q_x)))
         #rec_loss = tf.reduce_mean(tf.reduce_sum(BernoulliCrossEntropyCost(x_tilde, images), axis=[1, 2]))
@@ -117,7 +184,7 @@ def create_graph():
         grad_z = tf.gradients(rec_loss, z_q_x)
         enc_grads = [(tf.gradients(z_e_x, p, grad_z)[0] + tf.gradients(beta * commit_loss, p)[0], p) for p in enc_params]
 
-        learning_rate = 0.0002
+        learning_rate = 0.0001
         optimizer = tf.train.AdamOptimizer(learning_rate, use_locking=True)
         train_step = optimizer.apply_gradients(dec_grads + enc_grads + embed_grads)
 
@@ -170,7 +237,7 @@ def loop(sess, itr, extras, stateful_args):
 with tf.Session(graph=g) as sess:
     run_loop(sess,
              loop, train_itr,
-             loop, val_itr,
-             n_steps=4000,
-             n_train_steps_per=1000,
-             n_valid_steps_per=1000)
+             loop, valid_itr,
+             n_steps=20000,
+             n_train_steps_per=2000,
+             n_valid_steps_per=100)

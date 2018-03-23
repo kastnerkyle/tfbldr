@@ -494,11 +494,14 @@ def Conv2d(list_of_inputs, list_of_input_dims, num_feature_maps,
         raise ValueError("Must pass instance of np.random.RandomState!")
 
     if strides != [1, 1, 1, 1]:
-        try:
-            int(strides)
-            strides = [1, int(strides), int(strides), 1]
-        except:
-            raise ValueError("Changing strides by non-int not yet supported")
+        if hasattr(strides, "__len__") and len(strides) == 4:
+            pass
+        else:
+            try:
+                int(strides)
+                strides = [1, int(strides), int(strides), 1]
+            except:
+                raise ValueError("Changing strides by non-int not yet supported")
 
     if dilation != [1, 1, 1, 1]:
         raise ValueError("Changing dilation not yet supported")
@@ -591,11 +594,14 @@ def ConvTranspose2d(list_of_inputs, list_of_input_dims, num_feature_maps,
         raise ValueError("Conv2dTranspose is nearly always used with strides > 1!")
 
     if strides != [1, 1, 1, 1]:
-        try:
-            int(strides)
-            strides = [1, int(strides), int(strides), 1]
-        except:
-            raise ValueError("Changing strides by non-int not yet supported")
+        if hasattr(strides,"__len__") and len(strides) == 4:
+            pass
+        else:
+            try:
+                int(strides)
+                strides = [1, int(strides), int(strides), 1]
+            except:
+                raise ValueError("Changing strides by non-int not yet supported")
 
     input_t = tf.concat(list_of_inputs, axis=-1)
     input_channels = sum(list_of_input_dims)
@@ -659,13 +665,13 @@ def ConvTranspose2d(list_of_inputs, list_of_input_dims, num_feature_maps,
     shp = _shape(input_t)
     btch_sz = tf.shape(input_t)[0]
     # calcs from PyTorch docs
-    output_shape = tf.stack([btch_sz,
-                            (input_height - 1) * strides[1] - 2 * new_pad[1] + kernel_size[0],
-                            (input_width - 1) * strides[2] - 2 * new_pad[2] + kernel_size[1],
-                            num_feature_maps])
+    out_shp = [btch_sz,
+               (input_height - 1) * strides[1] - 2 * new_pad[1] + kernel_size[0],
+               (input_width - 1) * strides[2] - 2 * new_pad[2] + kernel_size[1],
+               num_feature_maps]
+    output_shape = tf.stack(out_shp)
     out = tf.nn.conv2d_transpose(input_t, weight, output_shape, strides, padding=pad)
-    # reshape not needed in 1.4
-    #out = tf.reshape(out, shp)
+    out = tf.reshape(out, out_shp)
 
     if biases:
         if (init is None) or (type(init) is str):

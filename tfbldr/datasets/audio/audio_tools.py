@@ -1364,7 +1364,7 @@ def kaiserbessel_window(X, alpha=6.5):
     return X * strided_win
 
 
-def overlap(X, window_size, window_step):
+def overlap(X, window_size, window_step, copy=True):
     """
     Create an overlapped version of X
 
@@ -1384,6 +1384,11 @@ def overlap(X, window_size, window_step):
     X_strided : shape=(n_windows, window_size)
         2D array of overlapped X
     """
+    if not hasattr(X, "shape") or len(X.shape) != 1:
+        raise ValueError("X must be passed as 1D np array")
+    if copy:
+        X = np.array(X)
+        X = X.copy()
     if window_size % 2 != 0:
         raise ValueError("Window size must be even!")
     # Make sure there are an even number of windows before stridetricks

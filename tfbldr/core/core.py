@@ -608,7 +608,7 @@ def run_loop(sess,
             train_summary = r[1]
             train_itr_steps_taken += 1
             minibatch_train_count.append(train_itr_steps_taken)
-            if (time.time() - last_status) > status_every_s:
+            if (i + 1) == n_train_steps_per or (time.time() - last_status) > status_every_s:
                 logger.info("train step {}/{}, overall train step {}".format(i + 1, n_train_steps_per, train_itr_steps_taken))
                 logger.info("train loss {}, overall train average {}".format(train_loss, np.mean(overall_train_loss + this_train_loss)))
                 logger.info(" ")
@@ -634,7 +634,7 @@ def run_loop(sess,
                 valid_summary = r[1]
                 valid_itr_steps_taken += 1
                 minibatch_valid_count.append(valid_itr_steps_taken)
-                if (time.time() - last_status) > status_every_s:
+                if (i + 1) == n_valid_steps_per or (time.time() - last_status) > status_every_s:
                     logger.info("valid step {}/{}, overall valid step {}".format(i + 1, n_valid_steps_per, valid_itr_steps_taken))
                     logger.info("valid loss {}, overall valid average {}".format(valid_loss, np.mean(overall_valid_loss + this_valid_loss)))
                     logger.info(" ")
