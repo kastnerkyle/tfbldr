@@ -1,5 +1,5 @@
-from .audio_tools import stft
-from ...plot import viridis_cm
+from ..datasets import stft
+from .plot import viridis_cm
 import numpy as np
 import matplotlib.pyplot as plt
 

@@ -630,20 +630,28 @@ def fetch_fruitspeech(fftsize=512, step=16, mean_normalize=True,
     return out
 
 
-def make_sines(n_timesteps, n_offsets, harmonic=False, square=False):
-    # Generate sinewaves offset in phase
+def make_sinewaves(n_timesteps, n_waves, base_freq=3, offset=True,
+                   use_cos=False,
+                   harmonic=False,
+                   harmonic_multpliers=[1.7, 7.362],
+                   square=False,
+                   square_thresh=0):
+    """
+    Generate sinewaves offset in phase, with optional harmonics or as square wave
+    """
     n_full = n_timesteps
-    d1 = 3 * np.arange(n_full) / (2 * np.pi)
-    d2 = 3 * np.arange(n_offsets) / (2 * np.pi)
-    full_sines = np.sin(np.array([d1] * n_offsets).T + d2).astype("float32")
+    d1 = float(base_freq) * np.arange(n_full) / (2 * np.pi)
+    d2 = float(base_freq) * np.arange(n_offsets) / (2 * np.pi)
+    if not offset:
+        d2 *= 0.
+    wave_type = np.sin if not use_cos else np.cos
+    full_sines = wave_type(np.array([d1] * n_offsets).T + d2).astype("float32")
     # Uncomment to add harmonics
     if harmonic:
-        full_sines += np.sin(np.array([1.7 * d1] * n_offsets).T + d2)
-        full_sines += np.sin(np.array([7.362 * d1] * n_offsets).T + d2)
+        for harmonic_m in harmonic_multipliers:
+            full_sines += wave_type(np.array([harmonic_m * d1] * n_offsets).T + d2)
     if square:
-        full_sines[full_sines <= 0] = 0
-        full_sines[full_sines > 0] = 1
+        full_sines[full_sines <= square_thresh] = 0
+        full_sines[full_sines > square_thresh] = 1
     full_sines = full_sines[:, :, None]
     return full_sines
-
-
