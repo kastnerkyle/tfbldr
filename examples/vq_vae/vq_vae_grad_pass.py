@@ -76,19 +76,19 @@ def create_decoder(latent, bn_flag):
 
 def create_vqvae(inp, bn):
     z_e_x = create_encoder(inp, bn)
-    z_q_x, z_i_x, emb = VqEmbedding(z_e_x, l_dims[-1][0], embedding_dim, random_state=random_state, name="embed")
+    z_q_x, z_i_x, z_nst_q_x, emb = VqEmbedding(z_e_x, l_dims[-1][0], embedding_dim, random_state=random_state, name="embed")
     x_tilde = create_decoder(z_q_x, bn)
-    return x_tilde, z_e_x, z_q_x, z_i_x, emb
+    return x_tilde, z_e_x, z_q_x, z_i_x, z_nst_q_x, emb
 
 def create_graph():
     graph = tf.Graph()
     with graph.as_default():
         images = tf.placeholder(tf.float32, shape=[None, 28, 28, 1])
         bn_flag = tf.placeholder_with_default(tf.zeros(shape=[]), shape=[])
-        x_tilde, z_e_x, z_q_x, z_i_x, z_emb = create_vqvae(images, bn_flag)
+        x_tilde, z_e_x, z_q_x, z_i_x, z_nst_q_x, z_emb = create_vqvae(images, bn_flag)
         rec_loss = tf.reduce_mean(BernoulliCrossEntropyCost(x_tilde, images))
-        vq_loss = tf.reduce_mean(tf.square(tf.stop_gradient(z_e_x) - z_q_x))
-        commit_loss = tf.reduce_mean(tf.square(z_e_x - tf.stop_gradient(z_q_x)))
+        vq_loss = tf.reduce_mean(tf.square(tf.stop_gradient(z_e_x) - z_nst_q_x))
+        commit_loss = tf.reduce_mean(tf.square(z_e_x - tf.stop_gradient(z_nst_q_x)))
         #rec_loss = tf.reduce_mean(tf.reduce_sum(BernoulliCrossEntropyCost(x_tilde, images), axis=[1, 2]))
         #vq_loss = tf.reduce_mean(tf.reduce_sum(tf.square(tf.stop_gradient(z_e_x) - z_q_x), axis=[1, 2, 3]))
         #commit_loss = tf.reduce_mean(tf.reduce_sum(tf.square(z_e_x - tf.stop_gradient(z_q_x)), axis=[1, 2, 3]))
@@ -153,6 +153,6 @@ with tf.Session(graph=g) as sess:
     run_loop(sess,
              loop, train_itr,
              loop, val_itr,
-             n_steps=10000,
+             n_steps=20000,
              n_train_steps_per=1000,
              n_valid_steps_per=1000)

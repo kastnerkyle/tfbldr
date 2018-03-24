@@ -317,8 +317,7 @@ def VqEmbedding(input_tensor, input_dim, embedding_dim,
                 random_state=None,
                 init="embedding_normal",
                 scale="default",
-                strict=None, name=None,
-                use_stop_grad_trick=True):
+                strict=None, name=None):
     """
     Will use stop_grad_trick to give a straighthrough estimator for gradient
     """
@@ -370,9 +369,7 @@ def VqEmbedding(input_tensor, input_dim, embedding_dim,
         elif len(ishp) == 3:
             z_q_x = tf.reshape(lu_vectors, (-1, shp[1], shp2[-1]))
         elif len(ishp) == 2:
-            z_q_x = tf.reshape(lu_vectors, (-1, shp[1], shp[2], shp2[-1]))
-            print("Got 2D input, dropping to debug...")
-            from IPython import embed; embed(); raise ValueError()
+            z_q_x = tf.reshape(lu_vectors, (-1, shp2[-1]))
         else:
             raise ValueError("Unknown input tensor dim {}, only 2, 3, 4 currently supported".format(len(ishp)))
         return z_q_x, discrete_latent_idx
@@ -382,15 +379,17 @@ def VqEmbedding(input_tensor, input_dim, embedding_dim,
     # but stop grad trick works fine for this
     #https://stackoverflow.com/questions/36456436/how-can-i-define-only-the-gradient-for-a-tensorflow-subgraph/36480182#36480182
     z_q_x, discrete_latent_idx = _vqcore(input_tensor, emb)
-    if use_stop_grad_trick:
-        # in general for g(x) desired gradient, y = f(x) desired forward
-        # t = g(x)
-        # y = t + tf.stop_gradient(f(x) - t)
-        # Here, use identity since we want g(x) to be straight-through
-        t = tf.identity(input_tensor)
-        z_q_x = t + tf.stop_gradient(z_q_x - t)
+    non_st_z_q_x = tf.identity(z_q_x)
+    # straight through trick
+    # in general for g(x) desired gradient, y = f(x) desired forward
+    # t = g(x)
+    # y = t + tf.stop_gradient(f(x) - t)
+    # Here, use identity since we want g(x) to be straight-through
+    t = tf.identity(input_tensor)
+    z_q_x = t + tf.stop_gradient(z_q_x - t)
     z_q_x = tf.identity(z_q_x, name=name_out)
-    return z_q_x, discrete_latent_idx, emb
+    # Need *both* straight through quantized and non-st for embedding loss
+    return z_q_x, discrete_latent_idx, non_st_z_q_x, emb
 
 
 def Embedding(indices, n_symbols, output_dim, random_state=None,
