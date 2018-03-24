@@ -313,8 +313,9 @@ def make_numpy_weights(in_dim, out_dims, random_state, init=None,
     return ws
 
 
-def VqEmbedding(input_tensor, input_dim, output_dim,
-                random_state=None, init="embedding_normal",
+def VqEmbedding(input_tensor, input_dim, embedding_dim,
+                random_state=None,
+                init="embedding_normal",
                 scale="default",
                 strict=None, name=None,
                 use_stop_grad_trick=True):
@@ -343,10 +344,10 @@ def VqEmbedding(input_tensor, input_dim, output_dim,
             raise ValueError("Name {} already created in params dict!".format(name_w))
 
     try:
-        vectors = _get_shared(name_w)
+        emb = _get_shared(name_w)
     except NameError:
         logger.info("VqEmbedding layer {} initialized using init {}".format(name, init))
-        embedding_weight, = make_numpy_weights(input_dim, [output_dim],
+        embedding_weight, = make_numpy_weights(input_dim, [embedding_dim],
                                                random_state, init=init,
                                                scale=scale)
         embedding_weight = embedding_weight.transpose(1, 0)
@@ -364,7 +365,16 @@ def VqEmbedding(input_tensor, input_dim, output_dim,
         flat_idx = tf.cast(tf.reshape(discrete_latent_idx, (-1,)), tf.int32)
         lu_vectors = tf.nn.embedding_lookup(emb, flat_idx)
         shp2 = _shape(lu_vectors)
-        z_q_x = tf.reshape(lu_vectors, (-1, shp[1], shp[2], shp2[-1]))
+        if len(ishp) == 4:
+            z_q_x = tf.reshape(lu_vectors, (-1, shp[1], shp[2], shp2[-1]))
+        elif len(ishp) == 3:
+            z_q_x = tf.reshape(lu_vectors, (-1, shp[1], shp2[-1]))
+        elif len(ishp) == 2:
+            z_q_x = tf.reshape(lu_vectors, (-1, shp[1], shp[2], shp2[-1]))
+            print("Got 2D input, dropping to debug...")
+            from IPython import embed; embed(); raise ValueError()
+        else:
+            raise ValueError("Unknown input tensor dim {}, only 2, 3, 4 currently supported".format(len(ishp)))
         return z_q_x, discrete_latent_idx
 
     # More proper ways here
@@ -376,6 +386,7 @@ def VqEmbedding(input_tensor, input_dim, output_dim,
         # in general for g(x) desired gradient, y = f(x) desired forward
         # t = g(x)
         # y = t + tf.stop_gradient(f(x) - t)
+        # Here, use identity since we want g(x) to be straight-through
         t = tf.identity(input_tensor)
         z_q_x = t + tf.stop_gradient(z_q_x - t)
     z_q_x = tf.identity(z_q_x, name=name_out)
