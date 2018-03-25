@@ -574,6 +574,8 @@ def run_loop(sess,
     last_status = time.time()
 
     model_saver = tf.train.Saver(max_to_keep=models_to_keep)
+    train_best_model_saver = tf.train.Saver(max_to_keep=models_to_keep)
+    valid_best_model_saver = tf.train.Saver(max_to_keep=models_to_keep)
     checkpoint_dir = get_checkpoint_dir()
 
     thw = threaded_html_writer()
@@ -584,6 +586,9 @@ def run_loop(sess,
     cumulative_valid_time = []
     minibatch_valid_time = []
     minibatch_valid_count = []
+    min_last_train_loss = np.inf
+    min_valid_loss = np.inf
+    was_best_valid_loss = False
     while True:
         # stop at the start of an epoch
         if train_itr_steps_taken + 1 >= n_steps:
@@ -615,6 +620,12 @@ def run_loop(sess,
                 last_status = time.time()
         overall_train_loss += this_train_loss
 
+        if train_loss < min_last_train_loss:
+            min_last_train_loss = train_loss
+            logger.info("had best train, step {}".format(train_itr_steps_taken))
+            train_best_model_saver.save(sess, os.path.join(checkpoint_dir, "models", "train_model"),
+                                        global_step=train_itr_steps_taken)
+
         extras["train"] = False
         if n_valid_steps_per > 0:
             this_valid_loss = []
@@ -626,6 +637,9 @@ def run_loop(sess,
                 if valid_stateful_args is not None:
                     this_valid_stateful_args = r[-1]
                 valid_loss = r[0]
+                if valid_loss < min_valid_loss:
+                    min_valid_loss = valid_loss
+                    was_best_valid_loss = True
                 this_valid_loss.append(valid_loss)
                 minibatch_time = e - s
                 valid_time_accumulator = 0 if len(cumulative_valid_time) == 0 else cumulative_valid_time[-1]
@@ -663,6 +677,12 @@ def run_loop(sess,
         thw.send((save_html_path, results_dict))
         model_saver.save(sess, os.path.join(checkpoint_dir, "models", "model"),
                          global_step=train_itr_steps_taken)
+        if was_best_valid_loss:
+            logger.info("had best valid, step {}".format(train_itr_steps_taken))
+            valid_best_model_saver.save(sess, os.path.join(checkpoint_dir, "models", "valid_model"),
+                                        global_step=train_itr_steps_taken)
+            was_best_valid_loss = False
+
         extras["train"] = True
 
     logger.info("Training complete, exiting...")

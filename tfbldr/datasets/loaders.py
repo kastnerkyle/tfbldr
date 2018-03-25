@@ -576,7 +576,7 @@ def fetch_fruitspeech(fftsize=512, step=16, mean_normalize=True,
 def make_sinewaves(n_timesteps, n_waves, base_freq=3, offset=True,
                    use_cos=False,
                    harmonic=False,
-                   harmonic_multpliers=[1.7, 7.362],
+                   harmonic_multipliers=[1.7, .62],
                    square=False,
                    square_thresh=0):
     """
