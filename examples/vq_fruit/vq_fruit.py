@@ -150,9 +150,9 @@ def create_decoder(latent, bn_flag):
 
 def create_vqvae(inp, bn):
     z_e_x = create_encoder(inp, bn)
-    z_q_x, z_i_x, emb = VqEmbedding(z_e_x, l_dims[-1][0], embedding_dim, random_state=random_state, name="embed")
+    z_q_x, z_i_x, z_nst_q_x, emb = VqEmbedding(z_e_x, l_dims[-1][0], embedding_dim, random_state=random_state, name="embed")
     x_tilde = create_decoder(z_q_x, bn)
-    return x_tilde, z_e_x, z_q_x, z_i_x, emb
+    return x_tilde, z_e_x, z_q_x, z_i_x, z_nst_q_x, emb
 
 
 def create_graph():
@@ -162,11 +162,11 @@ def create_graph():
                                                    train_audio[0].shape[1],
                                                    train_audio[0].shape[2]])
         bn_flag = tf.placeholder_with_default(tf.zeros(shape=[]), shape=[])
-        x_tilde, z_e_x, z_q_x, z_i_x, z_emb = create_vqvae(images, bn_flag)
+        x_tilde, z_e_x, z_q_x, z_i_x, z_nst_q_x, z_emb = create_vqvae(images, bn_flag)
         #rec_loss = tf.reduce_mean(BernoulliCrossEntropyCost(x_tilde, images))
         rec_loss = tf.reduce_mean(tf.square(x_tilde - images))
-        vq_loss = tf.reduce_mean(tf.square(tf.stop_gradient(z_e_x) - z_q_x))
-        commit_loss = tf.reduce_mean(tf.square(z_e_x - tf.stop_gradient(z_q_x)))
+        vq_loss = tf.reduce_mean(tf.square(tf.stop_gradient(z_e_x) - z_nst_q_x))
+        commit_loss = tf.reduce_mean(tf.square(z_e_x - tf.stop_gradient(z_nst_q_x)))
         #rec_loss = tf.reduce_mean(tf.reduce_sum(BernoulliCrossEntropyCost(x_tilde, images), axis=[1, 2]))
         #vq_loss = tf.reduce_mean(tf.reduce_sum(tf.square(tf.stop_gradient(z_e_x) - z_q_x), axis=[1, 2, 3]))
         #commit_loss = tf.reduce_mean(tf.reduce_sum(tf.square(z_e_x - tf.stop_gradient(z_q_x)), axis=[1, 2, 3]))
