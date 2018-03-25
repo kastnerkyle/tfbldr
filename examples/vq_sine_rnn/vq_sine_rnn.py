@@ -15,8 +15,8 @@ import tensorflow as tf
 import numpy as np
 from collections import namedtuple, defaultdict
 
-#sines = make_sinewaves(50, 40, harmonic=True)
-sines = make_sinewaves(50, 40)
+sines = make_sinewaves(50, 40, square=True)
+#sines = make_sinewaves(50, 40)
 train_sines = sines[:, ::2]
 train_sines = [train_sines[:, i] for i in range(train_sines.shape[1])]
 valid_sines = sines[:, 1::2]

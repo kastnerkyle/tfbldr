@@ -22,7 +22,7 @@ if args.model_path == None:
 else:
     model_path = args.model_path
 
-sines = make_sinewaves(50, 40)
+sines = make_sinewaves(50, 40, square=True)
 train_sines = sines[:, ::2]
 train_sines = [train_sines[:, i] for i in range(train_sines.shape[1])]
 valid_sines = sines[:, 1::2]
@@ -62,7 +62,7 @@ with tf.Session(config=config) as sess:
     )
     x = np.array(valid_sines)
     x = x.transpose(1, 0, 2)
-    prev_x = x[:1, :batch_size]
+    prev_x = 0. * x[:1, :batch_size] + 1.
     res = []
     q_res = []
     h_res = []
@@ -96,12 +96,14 @@ with tf.Session(config=config) as sess:
     o = np.concatenate(res, axis=0)[:, :, 0]
     ind = np.concatenate(i_res, axis=0)
 
-    f, axarr = plt.subplots(10, 1)
+    f, axarr = plt.subplots(11, 1)
     for i in range(10):
         if i % 2 == 0:
             axarr[i].plot(o[:, i // 2])
         else:
             axarr[i].plot(ind[:, i // 2])
+
+    axarr[-1].plot(valid_sines[0][:, 0], color="r")
 
     plt.savefig("results")
     plt.close()
