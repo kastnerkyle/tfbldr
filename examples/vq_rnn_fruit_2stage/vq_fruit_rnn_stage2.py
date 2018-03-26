@@ -16,7 +16,7 @@ from tfbldr.datasets import make_sinewaves
 
 import tensorflow as tf
 import numpy as np
-from collections import namedtuple, defaultdict
+from collections import namedtuple, defaultdict, OrderedDict
 
 
 train_d = np.load("stage1_data/train_data.npz")
@@ -31,27 +31,51 @@ axarr[3].plot(valid_sines[0].ravel())
 plt.savefig("tmp")
 """
 
-# 512 states
 train_arr = train_d["z_i_x"]
 valid_arr = valid_d["z_i_x"]
 train_data = [train_arr[i].transpose(1, 0) for i in range(len(train_arr))]
 valid_data = [valid_arr[i].transpose(1, 0) for i in range(len(valid_arr))]
 
+lu = {tuple(k.ravel()): v for v, k in enumerate(train_d["all_keys"])}
+
+train_i_data = [lu[tuple(train_data[i].ravel())] for i in range(len(train_data))]
+valid_i_data = [lu[tuple(valid_data[i].ravel())] for i in range(len(valid_data))]
+
+# make overlapping chunks of 10, overlapped by 5
+# not ideal, more ideally we could make this variable length, per word
+def list_overlap(l, size=10, step=5):
+    l = l[:len(l) - len(l) % step]
+    finals = []
+    ss = np.arange(0, len(l) - size + step, step)
+    for sis in ss:
+        finals.append(l[sis:sis+size])
+    return finals
+
+tid = list_overlap(train_i_data)
+tid = np.array(tid).astype("float32")
+tid = tid[..., None]
+vid = list_overlap(valid_i_data)
+vid = np.array(vid).astype("float32")
+vid = vid[..., None]
+
 train_itr_random_state = np.random.RandomState(1122)
 valid_itr_random_state = np.random.RandomState(12)
 batch_size = 10
-train_itr = list_iterator([train_data], 10, random_state=train_itr_random_state)
-valid_itr = list_iterator([valid_data], 10, random_state=valid_itr_random_state)
+train_itr = list_iterator([tid], batch_size, random_state=train_itr_random_state)
+valid_itr = list_iterator([vid], batch_size, random_state=valid_itr_random_state)
 
 random_state = np.random.RandomState(1999)
 
+# basically non-parametric in this toy case...
+n_inputs = int(tid.max())
 n_hid = 512
+n_clusters = 64
 rnn_init = "truncated_normal"
 forward_init = "truncated_normal"
 
 def create_model(inp_tm1, inp_t, h1_init, c1_init, h1_q_init, c1_q_init):
-    oh_tm1 = OneHot(inp_tm1, 512)
-    p_tm1 = Linear([oh_tm1], [512], n_hid, random_state=random_state, name="proj",
+    oh_tm1 = OneHot(inp_tm1, n_inputs)
+    p_tm1 = Linear([oh_tm1], [n_inputs], n_hid, random_state=random_state, name="proj",
                   init=forward_init)
     def step(x_t, h1_tm1, c1_tm1, h1_q_tm1, c1_q_tm1):
         output, s = LSTMCell([x_t], [n_hid], h1_tm1, c1_tm1, n_hid,
@@ -66,7 +90,7 @@ def create_model(inp_tm1, inp_t, h1_init, c1_init, h1_q_init, c1_q_init):
         h1_cq_t = s[0]
         c1_q_t = s[1]
 
-        h1_q_t, h1_i_t, h1_nst_q_t, h1_emb = VqEmbedding(h1_cq_t, n_hid, 512,
+        h1_q_t, h1_i_t, h1_nst_q_t, h1_emb = VqEmbedding(h1_cq_t, n_hid, n_clusters,
                                                          random_state=random_state,
                                                          name="h1_vq_emb")
 
@@ -84,7 +108,7 @@ def create_model(inp_tm1, inp_t, h1_init, c1_init, h1_q_init, c1_q_init):
     q_nvq_hiddens  = r[6]
     i_hiddens = r[7]
 
-    pred = Linear([out], [n_hid], 512, random_state=random_state, name="out",
+    pred = Linear([out], [n_hid], n_inputs, random_state=random_state, name="out",
                   init=forward_init)
     pred_sm = Softmax(pred)
     return pred_sm, pred, hiddens, cells, q_hiddens, q_cells, q_nst_hiddens, q_nvq_hiddens, i_hiddens, oh_tm1
@@ -202,5 +226,7 @@ with tf.Session(graph=g) as sess:
              loop, train_itr,
              loop, valid_itr,
              n_steps=50000,
-             n_train_steps_per=5000,
-             n_valid_steps_per=100)
+             n_train_steps_per=10000,
+             n_valid_steps_per=0)
+
+from IPython import embed; embed(); raise ValueError()

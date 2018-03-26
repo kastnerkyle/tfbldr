@@ -1,6 +1,5 @@
 import matplotlib
 matplotlib.use("Agg")
-import os
 
 import argparse
 import tensorflow as tf
@@ -10,7 +9,6 @@ from tfbldr.datasets.audio import soundsc
 from tfbldr.datasets.audio import overlap
 from tfbldr.plot import specgram
 from tfbldr.plot import specplot
-import copy
 
 from collections import namedtuple, defaultdict
 import sys
@@ -77,50 +75,46 @@ with tf.Session(config=config) as sess:
     vs = namedtuple('Params', fields)(
         *[tf.get_collection(name)[0] for name in fields]
     )
-    if not os.path.exists("stage1_data"):
-        os.mkdir("stage1_data")
-    for n, aa in enumerate([train_audio, valid_audio]):
-        x = aa[:, None, :, None]
-        feed = {vs.images: x,
-                vs.bn_flag: 1.}
-        outs = [vs.z_e_x, vs.z_q_x, vs.z_i_x, vs.x_tilde]
-        r = sess.run(outs, feed_dict=feed)
-        z_e_x = r[0]
-        z_q_x = r[1]
-        z_i_x = r[2]
-        x_rec = r[-1]
-        d = {"in_x": x,
-             "z_e_x": z_e_x,
-             "z_q_x": z_q_x,
-             "z_i_x": z_i_x,
-             "x_rec": x_rec}
-        name = "stage1_data/{}"
-        if n == 0:
-            name = name.format("train_data")
-        else:
-            name = name.format("valid_data")
-        np.savez(name, **d)
+    x = valid_audio[:, None, :, None]
+    feed = {vs.images: x,
+            vs.bn_flag: 1.}
+    outs = [vs.z_e_x, vs.z_q_x, vs.z_i_x, vs.x_tilde]
+    r = sess.run(outs, feed_dict=feed)
+    x_rec = r[-1]
 
-train_d = np.load("stage1_data/train_data.npz")
-train_d = {k:v for k, v in train_d.items()}
-valid_d = np.load("stage1_data/valid_data.npz")
-valid_d = {k:v for k, v in valid_d.items()}
+    rec_buf = np.zeros((len(x_rec) * step + 2 * cut))
+    for ni in range(len(x_rec)):
+        t = x_rec[ni, 0]
+        t = t[:, 0]
+        rec_buf[ni * step:(ni * step) + cut] += t
 
-train_arr = train_d["z_i_x"]
-valid_arr = valid_d["z_i_x"]
-train_keys = [tuple(train_arr[i, 0].ravel()) for i in range(len(train_arr[:, 0]))]
-valid_keys = [tuple(valid_arr[i, 0].ravel()) for i in range(len(valid_arr[:, 0]))]
-all_keys = train_keys + valid_keys
-train_d["train_keys"] = np.array(train_keys)
-train_d["valid_keys"] = np.array(valid_keys)
-train_d["all_keys"] = np.array(all_keys)
+    orig_buf = np.zeros((len(x) * step + 2 * cut))
+    for ni in range(len(x)):
+        t = x[ni, 0]
+        t = t[:, 0]
+        orig_buf[ni * step:(ni * step) + cut] += t
 
-valid_d["train_keys"] = np.array(train_keys)
-valid_d["valid_keys"] = np.array(valid_keys)
-valid_d["all_keys"] = np.array(all_keys)
+    x_o = orig_buf
+    x_r = rec_buf
 
-base_name = "stage1_data/{}"
-name = base_name.format("train_data")
-np.savez(name, **train_d)
-name = base_name.format("valid_data")
-np.savez(name, **valid_d)
+    f, axarr = plt.subplots(2, 1)
+    axarr[0].plot(x_r)
+    axarr[0].set_title("Reconstruction")
+    axarr[1].plot(x_o)
+    axarr[1].set_title("Original")
+
+    plt.savefig("vq_vae_generation_results")
+    plt.close()
+
+    f, axarr = plt.subplots(2, 1)
+    specplot(specgram(x_r), axarr[0])
+    axarr[0].set_title("Reconstruction")
+    specplot(specgram(x_o), axarr[1])
+    axarr[1].set_title("Original")
+
+    plt.savefig("vq_vae_generation_results_spec")
+    plt.close()
+
+    wavfile.write("original_wav.wav", 8000, soundsc(x_o))
+    wavfile.write("reconstructed_wav.wav", 8000, soundsc(x_r))
+    from IPython import embed; embed(); raise ValueError()

@@ -64,14 +64,15 @@ train_itr = list_iterator([train_audio], 50, random_state=train_itr_random_state
 valid_itr = list_iterator([valid_audio], 50, random_state=valid_itr_random_state)
 
 random_state = np.random.RandomState(1999)
-l1_dim = (64, 1, 4, [1, 1, 2, 1])
-l2_dim = (128, 1, 4, [1, 1, 2, 1])
+l1_dim = (32, 1, 4, [1, 1, 2, 1])
+l2_dim = (64, 1, 4, [1, 1, 2, 1])
+l3_dim = (128, 1, 4, [1, 1, 2, 1])
 l3_dim = (256, 1, 4, [1, 1, 2, 1])
-l3_dim = (257, 1, 4, [1, 1, 2, 1])
-l4_dim = (256, 1, 4, [1, 1, 2, 1])
-l5_dim = (257, 1, 1, [1, 1, 1, 1])
+l4_dim = (257, 1, 4, [1, 1, 2, 1])
+l5_dim = (256, 1, 4, [1, 1, 2, 1])
+l6_dim = (267, 1, 1, [1, 1, 1, 1])
 embedding_dim = 512
-l_dims = [l1_dim, l2_dim, l3_dim, l4_dim, l5_dim]
+l_dims = [l1_dim, l2_dim, l3_dim, l4_dim, l5_dim, l6_dim]
 stride_div = np.prod([ld[-1] for ld in l_dims])
 ebpad = [0, 0, 4 // 2 - 1, 0]
 dbpad = [0, 0, 4 // 2 - 1, 0]
@@ -106,9 +107,16 @@ def create_encoder(inp, bn_flag):
     r_l4 = ReLU(bn_l4)
 
     l5 = Conv2d([r_l4], [l_dims[3][0]], l_dims[4][0], kernel_size=l_dims[4][1:3], name="enc5",
+                strides=l_dims[4][-1],
+                border_mode=ebpad,
                 random_state=random_state)
     bn_l5 = BatchNorm2d(l5, bn_flag, name="bn_enc5")
-    return bn_l5
+    r_l5 = ReLU(bn_l5)
+
+    l6 = Conv2d([r_l5], [l_dims[4][0]], l_dims[5][0], kernel_size=l_dims[5][1:3], name="enc6",
+                random_state=random_state)
+    bn_l6 = BatchNorm2d(l6, bn_flag, name="bn_enc6")
+    return bn_l6
 
 
 def create_decoder(latent, bn_flag):
@@ -138,9 +146,16 @@ def create_decoder(latent, bn_flag):
     bn_l4 = BatchNorm2d(l4, bn_flag, name="bn_dec4")
     r_l4 = ReLU(bn_l4)
 
-
-    l5 = ConvTranspose2d([r_l4], [l_dims[-5][0]], 1, kernel_size=l_dims[-5][1:3], name="dec5",
+    l5 = ConvTranspose2d([r_l4], [l_dims[-5][0]], l_dims[-6][0], kernel_size=l_dims[-5][1:3], name="dec5",
                          strides=l_dims[-5][-1],
+                         border_mode=dbpad,
+                         random_state=random_state)
+    bn_l5 = BatchNorm2d(l5, bn_flag, name="bn_dec5")
+    r_l5 = ReLU(bn_l5)
+
+
+    l5 = ConvTranspose2d([r_l5], [l_dims[-6][0]], 1, kernel_size=l_dims[-6][1:3], name="dec6",
+                         strides=l_dims[-6][-1],
                          border_mode=dbpad,
                          random_state=random_state)
     #s_l5 = Sigmoid(l5)
@@ -170,8 +185,9 @@ def create_graph():
         #rec_loss = tf.reduce_mean(tf.reduce_sum(BernoulliCrossEntropyCost(x_tilde, images), axis=[1, 2]))
         #vq_loss = tf.reduce_mean(tf.reduce_sum(tf.square(tf.stop_gradient(z_e_x) - z_q_x), axis=[1, 2, 3]))
         #commit_loss = tf.reduce_mean(tf.reduce_sum(tf.square(z_e_x - tf.stop_gradient(z_q_x)), axis=[1, 2, 3]))
+        alpha = 1.
         beta = 0.25
-        loss = rec_loss + vq_loss + beta * commit_loss
+        loss = rec_loss + alpha * vq_loss + beta * commit_loss
         params = get_params_dict()
         grads = tf.gradients(loss, params.values())
 
@@ -231,6 +247,6 @@ with tf.Session(graph=g) as sess:
     run_loop(sess,
              loop, train_itr,
              loop, valid_itr,
-             n_steps=20000,
-             n_train_steps_per=2000,
-             n_valid_steps_per=100)
+             n_steps=50000,
+             n_train_steps_per=5000,
+             n_valid_steps_per=200)
