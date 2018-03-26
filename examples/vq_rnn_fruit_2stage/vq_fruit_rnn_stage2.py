@@ -45,7 +45,7 @@ valid_itr = list_iterator([valid_data], 10, random_state=valid_itr_random_state)
 
 random_state = np.random.RandomState(1999)
 
-n_hid = 100
+n_hid = 512
 rnn_init = "truncated_normal"
 forward_init = "truncated_normal"
 
