@@ -98,7 +98,7 @@ with tf.Session(config=config) as sess:
     i_res = []
     for n_round in range(rounds):
         this_res = [x]
-        this_i_res = []
+        this_i_res = [-1 * init_q_h[:, 0][None].astype("float32")]
         for i in range(inner_seq_len - 1):
             # cheater
             feed = {vs.inputs_tm1: x,
@@ -135,7 +135,7 @@ final_quantized_indices = final_quantized_indices[:, None]
 final_quantized_indices = final_quantized_indices.astype("int64")
 
 final_hidden_indices = final_hidden_indices.transpose(0, 2, 3, 1)
-final_hidden_indices = final_hidden_indices.reshape((-1, inner_seq_len-1))
+final_hidden_indices = final_hidden_indices.reshape((-1, inner_seq_len))
 final_hidden_indices = final_hidden_indices[:, None]
 final_hidden_indices = final_hidden_indices.astype("int64")
 
@@ -161,26 +161,33 @@ with tf.Session(config=config) as sess2:
     r = sess2.run(outs, feed_dict=feed)
     x_rec = r[0]
 
+i_rec = final_hidden_indices
 rec_buf = np.zeros((len(x_rec) * step + 2 * cut))
+i_buf = np.zeros((len(x_rec) * step + 2 * cut))
 for ni in range(len(x_rec)):
     t = x_rec[ni, 0]
     t = t[:, 0]
     rec_buf[ni * step:(ni * step) + cut] += t
+    for ii in range(inner_seq_len):
+        i_buf[ni * step + ii * inner_seq_len:ni * step + (ii + 1) * inner_seq_len] = i_rec[ni, 0, ii]
 
 x_r = rec_buf
+i_r = i_buf
 
-f, axarr = plt.subplots(1, 1)
-axarr.plot(x_r)
-axarr.set_title("Reconstruction")
+f, axarr = plt.subplots(2, 1)
+axarr[0].plot(x_r)
+axarr[0].set_title("Generation")
+axarr[1].plot(i_r, color="r")
 
 plt.savefig("vq_vae_generation_results")
 plt.close()
 
 f, axarr = plt.subplots(1, 1)
 specplot(specgram(x_r), axarr)
-axarr.set_title("Reconstruction")
+axarr.set_title("Generation")
+#axarr[1].plot(i_r, color="r")
 
 plt.savefig("vq_vae_generation_results_spec")
 plt.close()
 
-wavfile.write("reconstructed_wav.wav", 8000, soundsc(x_r))
+wavfile.write("generated_wav.wav", 8000, soundsc(x_r))
