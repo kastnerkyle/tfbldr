@@ -2,6 +2,8 @@ from .nodes import Linear
 from .nodes import ReLU
 from .nodes import Tanh
 from .nodes import Sigmoid
+from .nodes import OneHot
+from .nodes import Softmax
 from .nodes import Conv2d
 from .nodes import ConvTranspose2d
 from .nodes import BatchNorm2d
@@ -12,5 +14,7 @@ from .nodes import GaussianAttentionCell
 from .nodes import BernoulliAndCorrelatedGMM
 from .nodes import BernoulliAndCorrelatedGMMCost
 from .nodes import BernoulliCrossEntropyCost
+from .nodes import CategoricalCrossEntropyCost
+from .nodes import CategoricalCrossEntropyIndexCost
 from .nodes import make_numpy_weights
 from .nodes import make_numpy_biases

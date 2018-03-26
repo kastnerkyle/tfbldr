@@ -45,6 +45,25 @@ def ReLU(x):
     return relu(x)
 
 
+def Softmax(x):
+    if _shape(x)[-1] == 1:
+        raise ValueError("Input to Softmax should not be 1")
+    return tf.nn.softmax(x, axis=-1)
+
+
+def OneHot(x, out_dimension):
+    """ will cast to int32 """
+    if _shape(x)[-1] != 1:
+        raise ValueError("Input to ExpandingSoftmax must have last dimension 1")
+    expander = tf.eye(out_dimension)
+    orig_shape = tf.shape(x)
+    out_shape = tf.concat((orig_shape[:-1], (out_dimension,)), 0)
+    ind = tf.cast(tf.reshape(x, (-1,)), tf.int32)
+    x_e = tf.gather(expander, ind)
+    r_x_e = tf.cast(tf.reshape(x_e, out_shape), tf.float32)
+    return r_x_e
+
+
 def np_zeros(shape):
     """
     Builds a numpy variable filled with zeros
@@ -1204,3 +1223,22 @@ def BernoulliCrossEntropyCost(predicted, target, eps=1E-8):
         raise ValueError("Shape last dimension must be 1, got predicted {} and target {}".format(shpp, shpt))
     ep = target * tf.log(predicted + eps) + (1. - target) * tf.log(1. - predicted + eps)
     return -tf.reduce_sum(ep, axis=-1)
+
+
+def CategoricalCrossEntropyCost(predicted, target, eps=1E-8):
+    """
+    ONLY WORKS FOR 1 HOT TARGETS, NO SOFT TARGETS
+    """
+    ld_p = _shape(predicted)
+    ld_t = _shape(target)
+    if ld_p[-1] != ld_t[-1]:
+        raise ValueError("Last dimensions must match for prediction and target, got {} and {}. Did you want CategoricalCrossEntropyIndexCost instead?".format(ld_p, ld_t))
+    # no idea why the sum version doesn't work with 1 hot
+    c = -tf.log(tf.clip_by_value(tf.reduce_max(predicted * target, [-1]), eps, 1.))
+    return c
+
+
+def CategoricalCrossEntropyIndexCost(predicted, target, eps=1E-8):
+    ld = _shape(predicted)
+    oh_t = OneHot(target, ld[-1])
+    return CategoricalCrossEntropyCost(predicted, oh_t, eps=1E-8)
