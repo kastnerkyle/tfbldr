@@ -41,9 +41,9 @@ lu = {tuple(k.ravel()): v for v, k in enumerate(train_d["all_keys"])}
 train_i_data = [lu[tuple(train_data[i].ravel())] for i in range(len(train_data))]
 valid_i_data = [lu[tuple(valid_data[i].ravel())] for i in range(len(valid_data))]
 
-# make overlapping chunks of 10, overlapped by 5
+# make overlapping chunks of 10, overlapped by 1
 # not ideal, more ideally we could make this variable length, per word
-def list_overlap(l, size=10, step=5):
+def list_overlap(l, size=10, step=1):
     l = l[:len(l) - len(l) % step]
     finals = []
     ss = np.arange(0, len(l) - size + step, step)

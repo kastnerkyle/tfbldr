@@ -76,7 +76,8 @@ batch_size = 10
 n_z_clusters = int(tid.max())
 n_hid = 512
 inner_seq_len = tid.shape[1]
-rounds = 7
+rounds = 3
+offset = 237
 
 sample_random_state = np.random.RandomState(1165)
 
@@ -100,7 +101,8 @@ with tf.Session(config=config) as sess:
     )
     # use compressed from train as start seeds...
     x = tid.transpose(1, 0, 2)[0]
-    x = 10 * np.arange(batch_size)[None, :, None] + 0. * x[None, :batch_size]
+    # any random offset is fine I guess...
+    x = inner_seq_len * np.arange(batch_size)[None, :, None] + 0. * x[None, :batch_size] + offset
     init_h = np.zeros((batch_size, n_hid)).astype("float32")
     init_c = np.zeros((batch_size, n_hid)).astype("float32")
     init_q_h = np.zeros((batch_size, n_hid)).astype("float32")
@@ -125,7 +127,7 @@ with tf.Session(config=config) as sess:
             r = sess.run(outs, feed_dict=feed)
             p = r[0]
             # sample?
-            #x = np.array([sample_random_state.choice(list(range(n_z_clusters)), p=p[0, i]) for i in range(batch_size)]).astype("float32")[None, :, None]
+            #x = np.array([sample_random_state.choice(list(range(p.shape[-1])), p=p[0, i]) for i in range(batch_size)]).astype("float32")[None, :, None]
             x = p.argmax(axis=-1)[:, :, None].astype("float32")
             hids = r[1]
             cs = r[2]
@@ -140,11 +142,11 @@ with tf.Session(config=config) as sess:
             this_i_res.append(i_hids)
         res.append(this_res)
         i_res.append(this_i_res)
-        x = x + 1. + 90.
+        x = x + 1. + inner_seq_len * batch_size
     final_quantized_indices = np.array(res)
     final_hidden_indices = np.array(i_res)
 
-# 7, 10, 1, 10, 1 -> 7, 10, 10 in the right order
+# n_rounds, 10, 1, 10, 1 -> n_rounds, 10, 10 in the right order
 quantized = final_quantized_indices[:, :, 0, :, 0].astype("int32").transpose(0, 2, 1)
 indices = final_hidden_indices[:, :, 0].transpose(0, 2, 1)
 quantized = quantized.reshape(-1, quantized.shape[-1])
