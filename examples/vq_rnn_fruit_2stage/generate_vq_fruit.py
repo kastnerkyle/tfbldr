@@ -39,32 +39,44 @@ for s in fruit["data"]:
     minmin = min(minmin, s.min())
     maxmax = max(maxmax, s.max())
 
-train_data = []
-valid_data = []
-type_counts = defaultdict(lambda: 0)
-final_audio = []
-for n, s in enumerate(fruit["data"]):
-    type_counts[fruit["target"][n]] += 1
-    n_s = (s - minmin) / float(maxmax - minmin)
-    n_s = 2 * n_s - 1
-    if type_counts[fruit["target"][n]] == 15:
-        valid_data.append(n_s)
-    else:
-        train_data.append(n_s)
-
 cut = 512
 step = 512
-train_data = np.concatenate(train_data, axis=0)
-valid_data = np.concatenate(valid_data, axis=0)
-train_audio = overlap(train_data, cut, step)
-valid_audio = overlap(valid_data, cut, step)
 
 train_d = np.load("stage1_data/train_data.npz")
+valid_d = np.load("stage1_data/valid_data.npz")
+
+train_arr = train_d["z_i_x"]
+valid_arr = valid_d["z_i_x"]
+train_data = [train_arr[i].transpose(1, 0) for i in range(len(train_arr))]
+valid_data = [valid_arr[i].transpose(1, 0) for i in range(len(valid_arr))]
+
+lu = {tuple(k.ravel()): v for v, k in enumerate(train_d["all_keys"])}
+
+train_i_data = [lu[tuple(train_data[i].ravel())] for i in range(len(train_data))]
+valid_i_data = [lu[tuple(valid_data[i].ravel())] for i in range(len(valid_data))]
+
+# make overlapping chunks of 10, overlapped by 5
+# not ideal, more ideally we could make this variable length, per word
+def list_overlap(l, size=10, step=5):
+    l = l[:len(l) - len(l) % step]
+    finals = []
+    ss = np.arange(0, len(l) - size + step, step)
+    for sis in ss:
+        finals.append(l[sis:sis+size])
+    return finals
+
+tid = list_overlap(train_i_data)
+tid = np.array(tid).astype("float32")
+tid = tid[..., None]
+vid = list_overlap(valid_i_data)
+vid = np.array(vid).astype("float32")
+vid = vid[..., None]
+
 batch_size = 10
-n_z_clusters = 512
+n_z_clusters = int(tid.max())
 n_hid = 512
-inner_seq_len = 32
-rounds = 5
+inner_seq_len = tid.shape[1]
+rounds = 7
 
 sample_random_state = np.random.RandomState(1165)
 
@@ -87,9 +99,8 @@ with tf.Session(config=config) as sess:
         *[tf.get_collection(name)[0] for name in fields]
     )
     # use compressed from train as start seeds...
-    x = train_d["z_i_x"][:, 0, 0]
-    x = x[None, :]
-    x = 0. * x[:, :batch_size, None]
+    x = tid.transpose(1, 0, 2)[0]
+    x = 10 * np.arange(batch_size)[None, :, None] + 0. * x[None, :batch_size]
     init_h = np.zeros((batch_size, n_hid)).astype("float32")
     init_c = np.zeros((batch_size, n_hid)).astype("float32")
     init_q_h = np.zeros((batch_size, n_hid)).astype("float32")
@@ -99,8 +110,12 @@ with tf.Session(config=config) as sess:
     for n_round in range(rounds):
         this_res = [x]
         this_i_res = [-1 * init_q_h[:, 0][None].astype("float32")]
+        # reset these, trained only up to inner_seq_len dynamics get terrible
+        init_h = np.zeros((batch_size, n_hid)).astype("float32")
+        init_c = np.zeros((batch_size, n_hid)).astype("float32")
+        init_q_h = np.zeros((batch_size, n_hid)).astype("float32")
+        init_q_c = np.zeros((batch_size, n_hid)).astype("float32")
         for i in range(inner_seq_len - 1):
-            # cheater
             feed = {vs.inputs_tm1: x,
                     vs.init_hidden: init_h,
                     vs.init_cell: init_c,
@@ -110,8 +125,8 @@ with tf.Session(config=config) as sess:
             r = sess.run(outs, feed_dict=feed)
             p = r[0]
             # sample?
-            x = np.array([sample_random_state.choice(list(range(n_z_clusters)), p=p[0, i]) for i in range(batch_size)]).astype("float32")[None, :, None]
-            #x = p.argmax(axis=-1)[:, :, None].astype("float32")
+            #x = np.array([sample_random_state.choice(list(range(n_z_clusters)), p=p[0, i]) for i in range(batch_size)]).astype("float32")[None, :, None]
+            x = p.argmax(axis=-1)[:, :, None].astype("float32")
             hids = r[1]
             cs = r[2]
             q_hids = r[3]
@@ -125,19 +140,25 @@ with tf.Session(config=config) as sess:
             this_i_res.append(i_hids)
         res.append(this_res)
         i_res.append(this_i_res)
+        x = x + 1. + 90.
     final_quantized_indices = np.array(res)
     final_hidden_indices = np.array(i_res)
 
+# 7, 10, 1, 10, 1 -> 7, 10, 10 in the right order
+quantized = final_quantized_indices[:, :, 0, :, 0].astype("int32").transpose(0, 2, 1)
+indices = final_hidden_indices[:, :, 0].transpose(0, 2, 1)
+quantized = quantized.reshape(-1, quantized.shape[-1])
+indices = indices.reshape(-1, indices.shape[-1])
+r_lu = {v: k for k, v in lu.items()}
+# need to look these back up into something...
+q_shp = quantized.shape
+codes = [r_lu[q] for q in quantized.ravel().astype("int32")]
+codes = np.array(codes)[:, None]
+#codes = np.array(codes).reshape((q_shp[0], q_shp[1], -1))
 # make it look right for vq vae
-final_quantized_indices = final_quantized_indices.transpose(0, 2, 3, 4, 1)
-final_quantized_indices = final_quantized_indices.reshape((-1, inner_seq_len))
-final_quantized_indices = final_quantized_indices[:, None]
-final_quantized_indices = final_quantized_indices.astype("int64")
+final_quantized_indices = codes.astype("int64")
 
-final_hidden_indices = final_hidden_indices.transpose(0, 2, 3, 1)
-final_hidden_indices = final_hidden_indices.reshape((-1, inner_seq_len))
-final_hidden_indices = final_hidden_indices[:, None]
-final_hidden_indices = final_hidden_indices.astype("int64")
+final_hidden_indices = indices.flatten()[:, None]
 
 tf.reset_default_graph()
 
@@ -168,8 +189,7 @@ for ni in range(len(x_rec)):
     t = x_rec[ni, 0]
     t = t[:, 0]
     rec_buf[ni * step:(ni * step) + cut] += t
-    for ii in range(inner_seq_len):
-        i_buf[ni * step + ii * inner_seq_len:ni * step + (ii + 1) * inner_seq_len] = i_rec[ni, 0, ii]
+    i_buf[ni * step:(ni * step) + cut] = i_rec[ni]
 
 x_r = rec_buf
 i_r = i_buf
