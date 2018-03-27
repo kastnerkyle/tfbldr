@@ -55,9 +55,9 @@ lu = {tuple(k.ravel()): v for v, k in enumerate(train_d["all_keys"])}
 train_i_data = [lu[tuple(train_data[i].ravel())] for i in range(len(train_data))]
 valid_i_data = [lu[tuple(valid_data[i].ravel())] for i in range(len(valid_data))]
 
-# make overlapping chunks of 10, overlapped by 5
+# make overlapping chunks of 10, overlapped by 9
 # not ideal, more ideally we could make this variable length, per word
-def list_overlap(l, size=10, step=5):
+def list_overlap(l, size=10, step=1):
     l = l[:len(l) - len(l) % step]
     finals = []
     ss = np.arange(0, len(l) - size + step, step)
@@ -112,11 +112,11 @@ with tf.Session(config=config) as sess:
     for n_round in range(rounds):
         this_res = [x]
         this_i_res = [-1 * init_q_h[:, 0][None].astype("float32")]
-        # reset these, trained only up to inner_seq_len dynamics get terrible
-        init_h = np.zeros((batch_size, n_hid)).astype("float32")
-        init_c = np.zeros((batch_size, n_hid)).astype("float32")
-        init_q_h = np.zeros((batch_size, n_hid)).astype("float32")
-        init_q_c = np.zeros((batch_size, n_hid)).astype("float32")
+        # can reset these, trained only up to inner_seq_len by seems ok if trained on overlap frames
+        #init_h = np.zeros((batch_size, n_hid)).astype("float32")
+        #init_c = np.zeros((batch_size, n_hid)).astype("float32")
+        #init_q_h = np.zeros((batch_size, n_hid)).astype("float32")
+        #init_q_c = np.zeros((batch_size, n_hid)).astype("float32")
         for i in range(inner_seq_len - 1):
             feed = {vs.inputs_tm1: x,
                     vs.init_hidden: init_h,
@@ -177,6 +177,7 @@ with tf.Session(config=config) as sess2:
         *[tf.get_collection(name)[0] for name in fields]
     )
 
+    # due to straighthrough impl tensorflow still wants the input, set to all 0 to be sure it has no impact
     feed = {vs.images: np.zeros((len(final_quantized_indices), 1, 512, 1)).astype("float32"),
             vs.z_i_x: final_quantized_indices,
             vs.bn_flag: 1.}
@@ -184,6 +185,7 @@ with tf.Session(config=config) as sess2:
     r = sess2.run(outs, feed_dict=feed)
     x_rec = r[0]
 
+# put all the shorter traces into one long sequence, no overlap add or anything
 i_rec = final_hidden_indices
 rec_buf = np.zeros((len(x_rec) * step + 2 * cut))
 i_buf = np.zeros((len(x_rec) * step + 2 * cut))
