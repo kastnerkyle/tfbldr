@@ -68,7 +68,6 @@ valid_itr = list_iterator([valid_audio], 50, random_state=valid_itr_random_state
 random_state = np.random.RandomState(1999)
 l1_dim = (64, 1, 4, [1, 1, 2, 1])
 l2_dim = (128, 1, 4, [1, 1, 2, 1])
-l3_dim = (256, 1, 4, [1, 1, 2, 1])
 l3_dim = (257, 1, 4, [1, 1, 2, 1])
 l4_dim = (256, 1, 4, [1, 1, 2, 1])
 l5_dim = (257, 1, 1, [1, 1, 1, 1])

@@ -43,7 +43,7 @@ valid_i_data = [lu[tuple(valid_data[i].ravel())] for i in range(len(valid_data))
 
 # make overlapping chunks of 10, overlapped by 1
 # not ideal, more ideally we could make this variable length, per word
-def list_overlap(l, size=10, step=1):
+def list_overlap(l, size=20, step=1):
     l = l[:len(l) - len(l) % step]
     finals = []
     ss = np.arange(0, len(l) - size + step, step)
@@ -60,14 +60,15 @@ vid = vid[..., None]
 
 train_itr_random_state = np.random.RandomState(1122)
 valid_itr_random_state = np.random.RandomState(12)
-batch_size = 10
+batch_size = 50
 train_itr = list_iterator([tid], batch_size, random_state=train_itr_random_state)
 valid_itr = list_iterator([vid], batch_size, random_state=valid_itr_random_state)
 
 random_state = np.random.RandomState(1999)
 
-# basically non-parametric in this toy case...
-n_inputs = int(tid.max())
+previous_z_size = len(train_data[0])
+previous_clusters = 512
+n_inputs = previous_z_size * previous_clusters
 n_hid = 512
 n_clusters = 64
 rnn_init = "truncated_normal"

@@ -39,8 +39,8 @@ for s in fruit["data"]:
     minmin = min(minmin, s.min())
     maxmax = max(maxmax, s.max())
 
-cut = 512
-step = 512
+cut = 256
+step = 256
 
 train_d = np.load("stage1_data/train_data.npz")
 valid_d = np.load("stage1_data/valid_data.npz")
@@ -72,8 +72,8 @@ vid = list_overlap(valid_i_data)
 vid = np.array(vid).astype("float32")
 vid = vid[..., None]
 
-batch_size = 10
-n_z_clusters = int(tid.max())
+batch_size = 50
+n_z_clusters = 16 * 512
 n_hid = 512
 inner_seq_len = tid.shape[1]
 rounds = 3
@@ -178,7 +178,7 @@ with tf.Session(config=config) as sess2:
     )
 
     # due to straighthrough impl tensorflow still wants the input, set to all 0 to be sure it has no impact
-    feed = {vs.images: np.zeros((len(final_quantized_indices), 1, 512, 1)).astype("float32"),
+    feed = {vs.images: np.zeros((len(final_quantized_indices), 1, cut, 1)).astype("float32"),
             vs.z_i_x: final_quantized_indices,
             vs.bn_flag: 1.}
     outs = [vs.x_tilde]

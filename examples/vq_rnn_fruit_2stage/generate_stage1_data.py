@@ -58,8 +58,9 @@ for n, s in enumerate(fruit["data"]):
     else:
         train_data.append(n_s)
 
-cut = 512
-step = 512
+# no overlap for now
+cut = 256
+step = 256
 train_data = np.concatenate(train_data, axis=0)
 valid_data = np.concatenate(valid_data, axis=0)
 train_audio = overlap(train_data, cut, step)
