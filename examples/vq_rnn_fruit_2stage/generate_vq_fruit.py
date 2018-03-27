@@ -102,7 +102,11 @@ with tf.Session(config=config) as sess:
     # use compressed from train as start seeds...
     x = tid.transpose(1, 0, 2)[0]
     # any random offset is fine I guess...
-    x = inner_seq_len * np.arange(batch_size)[None, :, None] + 0. * x[None, :batch_size] + offset
+    #x = inner_seq_len * np.arange(batch_size)[None, :, None] + 0. * x[None, :batch_size] + offset
+    set_points = np.arange(0, len(x) // 2 - rounds * batch_size)
+    sample_random_state.shuffle(set_points)
+    set_points = set_points[:batch_size]
+    x = set_points[None, :, None] +0. * x[None, :batch_size]
     init_h = np.zeros((batch_size, n_hid)).astype("float32")
     init_c = np.zeros((batch_size, n_hid)).astype("float32")
     init_q_h = np.zeros((batch_size, n_hid)).astype("float32")
