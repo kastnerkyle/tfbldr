@@ -56,8 +56,10 @@ for n, s in enumerate(fruit["data"]):
     else:
         train_data.append(n_s)
 
-cut = 512
-step = 512
+cut = 256
+# change to no overlap for now
+step = 16
+eval_batch_size = 500
 train_data = np.concatenate(train_data, axis=0)
 valid_data = np.concatenate(valid_data, axis=0)
 train_audio = overlap(train_data, cut, step)
@@ -75,12 +77,22 @@ with tf.Session(config=config) as sess:
     vs = namedtuple('Params', fields)(
         *[tf.get_collection(name)[0] for name in fields]
     )
-    x = valid_audio[:, None, :, None]
-    feed = {vs.images: x,
-            vs.bn_flag: 1.}
-    outs = [vs.z_e_x, vs.z_q_x, vs.z_i_x, vs.x_tilde]
-    r = sess.run(outs, feed_dict=feed)
-    x_rec = r[-1]
+    all_x = valid_audio[:, None, :, None]
+    all_x_rec = []
+    print("Finished restoring parameters, running audio of size {}".format(all_x.shape))
+    start_inds = np.arange(0, len(all_x), eval_batch_size)
+    for n, i in enumerate(start_inds):
+        x = all_x[i:i + eval_batch_size]
+        print("Running eval batch {} of {}, size {}".format(n + 1, len(start_inds), x.shape))
+        feed = {vs.images: x,
+                vs.bn_flag: 1.}
+        outs = [vs.z_e_x, vs.z_q_x, vs.z_i_x, vs.x_tilde]
+        r = sess.run(outs, feed_dict=feed)
+        x_rec = r[-1]
+        all_x_rec.append(x_rec)
+
+    x = all_x
+    x_rec = np.concatenate(all_x_rec, axis=0)
 
     rec_buf = np.zeros((len(x_rec) * step + 2 * cut))
     for ni in range(len(x_rec)):

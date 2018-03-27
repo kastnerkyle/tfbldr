@@ -43,7 +43,7 @@ for n, s in enumerate(fruit["data"]):
     else:
         train_data.append(n_s)
 
-def _cuts(list_of_audio, cut=512, step=512):
+def _cuts(list_of_audio, cut, step):
     # make many overlapping cuts
     # 8k, this means offset is ~4ms @ step of 32
     real_final = []
@@ -55,8 +55,10 @@ def _cuts(list_of_audio, cut=512, step=512):
             real_final.append(s[st:st + cut][None, :, None])
     return real_final
 
-train_audio = _cuts(train_data)
-valid_audio = _cuts(valid_data)
+cut = 256
+step = 16
+train_audio = _cuts(train_data, cut, step)
+valid_audio = _cuts(valid_data, cut, step)
 
 train_itr_random_state = np.random.RandomState(1122)
 valid_itr_random_state = np.random.RandomState(12)
@@ -232,6 +234,6 @@ with tf.Session(graph=g) as sess:
     run_loop(sess,
              loop, train_itr,
              loop, valid_itr,
-             n_steps=20000,
-             n_train_steps_per=2000,
-             n_valid_steps_per=200)
+             n_steps=50000,
+             n_train_steps_per=5000,
+             n_valid_steps_per=250)
