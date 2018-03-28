@@ -32,7 +32,74 @@ from .audio import stft
 from ..core import download
 from ..core import get_logger
 
+from itertools import islice, chain
+import string
+
 logger = get_logger()
+
+# https://stackoverflow.com/questions/845058/how-to-get-line-count-cheaply-in-python
+def _make_gen(reader):
+    b = reader(1024 * 1024)
+    while b:
+        yield b
+        b = reader(1024*1024)
+
+def rawgencount(filename):
+    f = open(filename, 'rb')
+    # 2 / 3 compat
+    if hasattr(f, "raw"):
+        f_gen = _make_gen(f.raw.read)
+    else:
+        f_gen = _make_gen(f.read)
+    return sum(buf.count(b'\n') for buf in f_gen)
+
+ascii_printable = string.printable
+
+class char_textfile_iterator(object):
+    def __init__(self, textfile_path, batch_size,
+                 seq_length,
+                 number_of_lines_in_file=None,
+                 one_hot_size=None, random_state=None):
+        """ if seq_length is None, split the file evenly into batch_size chunks,
+            contiguous, truncating the last uneven part """
+
+        self.textfile_path = textfile_path
+        self.random_state = random_state
+        self.batch_size = batch_size
+        self.seq_length = seq_length
+        if random_state is None:
+            raise ValueError("Must pass random state for random selection")
+
+        self.char2ind = {k: v for v, k in enumerate(string.printable)}
+        self.ind2char = {v: k for k, v in self.char2ind.items()}
+
+        if number_of_lines_in_file is None:
+            n_lines = rawgencount(textfile_path)
+            number_of_lines_in_file = n_lines
+        self.number_of_lines_in_file = number_of_lines_in_file
+
+        init_gap_ = (number_of_lines_in_file - number_of_lines_in_file % batch_size) // batch_size
+        self.init_gap_ = init_gap_
+
+        self.indices_ = [i * self.init_gap_ for i in range(self.batch_size)]
+        self._f = open(textfile_path, 'rb')
+        self.chainslices_ = [chain.from_iterable(islice(self._f, ind, ind + self.init_gap_)) for ind in self.indices_]
+
+    def next_batch(self):
+        batch = np.zeros((self.seq_length, self.batch_size, 1)).astype("int32")
+        resets = np.zeros((self.seq_length, self.batch_size))
+        for bi in range(self.batch_size):
+            for si in range(self.seq_length):
+                try:
+                    c = self.chainslices_[bi].next()
+                    batch[si, bi] = self.char2ind[c]
+                except StopIteration:
+                    ind = self.random_state.randint(0, self.number_of_lines_in_file - self.init_gap_)
+                    self.chainslices_[bi] = chain.from_iterable(islice(self._f, ind, ind + self.init_gap_))
+                    resets[si, bi] = 1.
+        batch = batch.astype("float32")
+        return batch, resets
+
 
 
 class list_iterator(object):
