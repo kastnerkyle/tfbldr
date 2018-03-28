@@ -23,6 +23,13 @@ train_itr = char_textfile_iterator("ptb_data/ptb.train.txt", batch_size, seq_len
 valid_itr = char_textfile_iterator("ptb_data/ptb.valid.txt", batch_size, seq_length,
                                    random_state=valid_random_state)
 
+for i in range(10000):
+    b, r = train_itr.next_batch()
+    print(i)
+    print(b)
+
+raise ValueError()
+
 random_state = np.random.RandomState(1177)
 
 n_hid = 512

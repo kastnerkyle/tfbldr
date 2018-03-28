@@ -82,8 +82,8 @@ class char_textfile_iterator(object):
         self.init_gap_ = init_gap_
 
         self.indices_ = [i * self.init_gap_ for i in range(self.batch_size)]
-        self._f = open(textfile_path, 'rb')
-        self.chainslices_ = [chain.from_iterable(islice(self._f, ind, ind + self.init_gap_)) for ind in self.indices_]
+        self._f_handles = [open(textfile_path, 'rb') for i in range(self.batch_size)]
+        self.chainslices_ = [chain.from_iterable(islice(self._f_handles[n], ind, ind + self.init_gap_)) for n, ind in enumerate(self.indices_)]
 
     def next_batch(self):
         batch = np.zeros((self.seq_length, self.batch_size, 1)).astype("int32")
@@ -94,12 +94,16 @@ class char_textfile_iterator(object):
                     c = self.chainslices_[bi].next()
                     batch[si, bi] = self.char2ind[c]
                 except StopIteration:
-                    ind = self.random_state.randint(0, self.number_of_lines_in_file - self.init_gap_)
-                    self.chainslices_[bi] = chain.from_iterable(islice(self._f, ind, ind + self.init_gap_))
+                    ind = self.random_state.randint(0, self.number_of_lines_in_file - self.init_gap_ - 1)
+                    self._f_handles[bi] = open(self.textfile_path, "rb")
+                    self.indices_[bi] = ind
+                    self.chainslices_[bi] = chain.from_iterable(islice(self._f_handles[bi], ind, ind + self.init_gap_))
                     resets[si, bi] = 1.
+                    c = self.chainslices_[bi].next()
+                    batch[si, bi] = self.char2ind[c]
+
         batch = batch.astype("float32")
         return batch, resets
-
 
 
 class list_iterator(object):
