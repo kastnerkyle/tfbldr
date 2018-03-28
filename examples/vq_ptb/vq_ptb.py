@@ -23,13 +23,6 @@ train_itr = char_textfile_iterator("ptb_data/ptb.train.txt", batch_size, seq_len
 valid_itr = char_textfile_iterator("ptb_data/ptb.valid.txt", batch_size, seq_length,
                                    random_state=valid_random_state)
 
-for i in range(10000):
-    b, r = train_itr.next_batch()
-    print(i)
-    print(b)
-
-raise ValueError()
-
 random_state = np.random.RandomState(1177)
 
 n_hid = 512
@@ -184,6 +177,6 @@ with tf.Session(graph=g) as sess:
     run_loop(sess,
              loop, train_itr,
              loop, valid_itr,
-             n_steps=50000,
-             n_train_steps_per=5000,
-             n_valid_steps_per=100)
+             n_steps=200000,
+             n_train_steps_per=10000,
+             n_valid_steps_per=500)
