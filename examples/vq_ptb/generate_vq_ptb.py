@@ -113,6 +113,8 @@ with tf.Session(config=config) as sess:
     with open("ptb_data/ptb.test.txt", "rb") as f:
         lines = f.readlines()
 
+    lines = lines[:35]
+
     # do it the simple way
     tot = []
     ii = 0
@@ -162,8 +164,15 @@ with tf.Session(config=config) as sess:
         all_char_probs += char_probs
         i_hids = r[2]
         ii += 1
+    # http://ofir.io/Neural-Language-Modeling-From-Scratch/
+    # this isn't right...
     logsum_and_len = [(np.sum(np.log(acp)), len(acp)) for acp in all_char_probs]
     sumlogsum = np.sum([a[0] for a in logsum_and_len])
     sumlen = np.sum([a[1] for a in logsum_and_len])
-    ppl = np.exp(-sumlogsum / sumlen)
+    ppl = np.power(2, -sumlogsum / sumlen)
+    # https://stats.stackexchange.com/questions/211858/how-to-compute-bits-per-character-bpc
+    log2sum_and_len = [(np.sum(np.log2(acp)), len(acp)) for acp in all_char_probs]
+    sumlog2sum = np.sum([a[0] for a in log2sum_and_len])
+    sumlen = np.sum([a[1] for a in log2sum_and_len])
+    bpc = -sumlog2sum / sumlen
     from IPython import embed; embed(); raise ValueError()
