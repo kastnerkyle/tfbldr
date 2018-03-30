@@ -83,7 +83,8 @@ def create_graph():
         init_q_cell = tf.placeholder(tf.float32, shape=[batch_size, n_hid])
         r = create_model(inputs_tm1, inputs_t, init_hidden, init_cell, init_q_hidden, init_q_cell)
         pred_sm, pred, hiddens, cells, q_hiddens, q_cells, q_nst_hiddens, q_nvq_hiddens, i_hiddens = r
-        rec_loss = tf.reduce_mean(CategoricalCrossEntropyIndexCost(pred_sm, inputs_t))
+        per_step_rec_loss = CategoricalCrossEntropyIndexCost(pred_sm, inputs_t)
+        rec_loss = tf.reduce_mean(per_step_rec_loss)
 
         alpha = 1.
         beta = 0.25
@@ -117,6 +118,7 @@ def create_graph():
                     "pred_sm",
                     "pred",
                     "loss",
+                    "per_step_rec_loss",
                     "rec_loss",
                     "train_step"]
     things_tf = [inputs,
@@ -135,6 +137,7 @@ def create_graph():
                  pred_sm,
                  pred,
                  loss,
+                 per_step_rec_loss,
                  rec_loss,
                  train_step]
     assert len(things_names) == len(things_tf)

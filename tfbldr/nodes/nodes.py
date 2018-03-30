@@ -1233,8 +1233,7 @@ def CategoricalCrossEntropyCost(predicted, target, eps=1E-8):
     ld_t = _shape(target)
     if ld_p[-1] != ld_t[-1]:
         raise ValueError("Last dimensions must match for prediction and target, got {} and {}. Did you want CategoricalCrossEntropyIndexCost instead?".format(ld_p, ld_t))
-    # no idea why the sum version doesn't work with 1 hot
-    c = -tf.log(tf.clip_by_value(tf.reduce_max(predicted * target, [-1]), eps, 1.))
+    c = -tf.reduce_sum((target * tf.log(tf.clip_by_value(predicted, eps, 1.))), [-1])
     return c
 
 
@@ -1242,3 +1241,7 @@ def CategoricalCrossEntropyIndexCost(predicted, target, eps=1E-8):
     ld = _shape(predicted)
     oh_t = OneHot(target, ld[-1])
     return CategoricalCrossEntropyCost(predicted, oh_t, eps=1E-8)
+
+
+def CategoricalCrossEntropyLinearIndexCost(linear_predicted, target):
+    return tf.nn.sparse_softmax_cross_entropy_with_logits(logits=linear_predicted, labels=target)

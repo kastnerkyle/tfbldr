@@ -16,5 +16,6 @@ from .nodes import BernoulliAndCorrelatedGMMCost
 from .nodes import BernoulliCrossEntropyCost
 from .nodes import CategoricalCrossEntropyCost
 from .nodes import CategoricalCrossEntropyIndexCost
+from .nodes import CategoricalCrossEntropyLinearIndexCost
 from .nodes import make_numpy_weights
 from .nodes import make_numpy_biases
