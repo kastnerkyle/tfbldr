@@ -4247,6 +4247,32 @@ def run_ltsd_example():
     wavfile.write("%s_out.wav" % bname, fs, soundsc(d))
 
 
+def mu_law_transform(signal, quantization_channels):
+    """ Implementation from ibab tensorflow-wavenet
+        Take in floats in [-1, 1]
+        outputs from [-1, 1] companded
+    """
+    mu = quantization_channels - 1
+
+    magnitude = np.log1p(mu * np.abs(signal)) / np.log1p(mu)
+    signal = np.sign(signal) * magnitude
+    return signal
+
+
+def mu_law_inverse(signal, quantization_channels):
+    """ Implementation from ibab tensorflow-wavenet
+        Take in companded floats in [-1, 1]
+        outputs are [-1, 1] uncompanded
+
+        quantization_channels is almost always 256
+    """
+    mu = quantization_channels - 1
+    y = signal
+
+    x = np.sign(y) * (1.0 / mu) * ((1.0 + mu)**abs(y) - 1.0)
+    return x
+
+
 def mu_law_encode(signal, quantization_channels):
     """ Implementation from ibab tensorflow-wavenet
         Take in floats in [-1, 1]

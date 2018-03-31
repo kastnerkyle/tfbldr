@@ -1039,8 +1039,7 @@ def GaussianAttentionCell(list_of_step_inputs, list_of_step_input_dims,
 
 def DiscreteMixtureOfLogistics(list_of_inputs, list_of_input_dims,
                                n_components=10, name=None,
-                               random_state=None, strict=None, init=None,
-                               log_eps=-7):
+                               random_state=None, strict=None, init=None):
     if name is None:
         name = _get_name()
     else:
@@ -1052,7 +1051,7 @@ def DiscreteMixtureOfLogistics(list_of_inputs, list_of_input_dims,
         assert len(shp0) == len(_shape(li))
     if len(shp0) == 4:
         # https://github.com/openai/weightnorm/blob/master/tensorflow/nn.py#L30
-        # means and log_scales so * 2
+        # means and log_scales so * 2 , mixtures so + n_components
         l = Conv2d(list_of_inputs, list_of_input_dims, 2 * n_components + n_components, kernel_size=(1, 1),
                    name=name + "_conv",
                    random_state=random_state)
@@ -1069,17 +1068,18 @@ def log_prob_from_logits(x):
     return x - m - tf.log(tf.reduce_sum(tf.exp(x-m), axis, keepdims=True))
 
 
-def DiscreteMixtureOfLogisticsCost(in_mixtures, in_means, in_lin_scales, target, bin_size,
-                                   min_log_eps=-5, max_log_eps=15):
+def DiscreteMixtureOfLogisticsCost(in_mixtures, in_means, in_lin_scales, target, num_bins,
+                                   min_log_eps=-7):
     """
     based on https://github.com/openai/weightnorm/blob/master/tensorflow/nn.py#L30
 
     use the output from DiscreteMixtureOfLogistics layer as inputs
-    expects bucketed targets in range 0, bin_size - 1
+    expects real valued targets in [-1, 1]
 
-    e.g. for images or 8 bit mu-law quantized audio, use bin_size=256
+    num_bins is discretization interval
+    e.g. for images or 8 bit mu-law quantized audio, common to use num_bins=256
     """
-    bin_size = bin_size - 1
+    bin_size = num_bins - 1
     if len(_shape(target)) != 4:
         raise ValueError("Target shape != 4 currently unsupported")
     # based on https://github.com/openai/weightnorm/blob/master/tensorflow/nn.py#L30
@@ -1091,7 +1091,6 @@ def DiscreteMixtureOfLogisticsCost(in_mixtures, in_means, in_lin_scales, target,
     # The last 10 is mixture components (softmax)
     n_components = _shape(in_mixtures)[-1]
     joint = tf.concat([in_mixtures, in_means, in_lin_scales], axis=-1)
-    from IPython import embed; embed(); raise ValueError()
     shp = _shape(joint)
     xs = _shape(target)
     nr_mix = n_components
@@ -1125,8 +1124,8 @@ def DiscreteMixtureOfLogisticsCost(in_mixtures, in_means, in_lin_scales, target,
     # robust version, that still works if probabilities are below 1e-5 (which never happens in our code)
     # tensorflow backpropagates through tf.select() by multiplying with zero instead of selecting: this requires use to use some ugly tricks to avoid potential NaNs
     # the 1e-12 in tf.maximum(cdf_delta, 1e-12) is never actually used as output, it's purely there to get around the tf.select() gradient issue
-    # if the probability on a sub-pixel is below 1e-5, we use an approximation based on the assumption that the log-density is constant in the bin of the observed sub-pixel value
-    log_probs = tf.where(x < -0.999, log_cdf_plus, tf.where(x > 0.999, log_one_minus_cdf_min, tf.where(cdf_delta > 1e-5, tf.log(tf.maximum(cdf_delta, 1e-12)), log_pdf_mid - np.log(bin_size / 2))))
+    # if the probability on a sub-pixel is below 1E-5, we use an approximation based on the assumption that the log-density is constant in the bin of the observed sub-pixel value
+    log_probs = tf.where(x < -0.999, log_cdf_plus, tf.where(x > 0.999, log_one_minus_cdf_min, tf.where(cdf_delta > 1E-5, tf.log(tf.maximum(cdf_delta, 1E-12)), log_pdf_mid - np.log(bin_size / 2))))
 
     log_probs = tf.reduce_sum(log_probs, axis=3) + log_prob_from_logits(logit_probs)
     return -tf.reduce_sum(log_probs, [-1])

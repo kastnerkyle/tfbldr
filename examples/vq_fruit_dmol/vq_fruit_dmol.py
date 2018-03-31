@@ -9,8 +9,8 @@ from tfbldr.nodes import BernoulliCrossEntropyCost
 from tfbldr.nodes import DiscreteMixtureOfLogistics
 from tfbldr.nodes import DiscreteMixtureOfLogisticsCost
 from tfbldr.datasets import list_iterator
-from tfbldr.datasets.audio import mu_law_encode
-from tfbldr.datasets.audio import mu_law_decode
+from tfbldr.datasets.audio import mu_law_transform
+from tfbldr.datasets.audio import mu_law_inverse
 from tfbldr.plot import get_viridis
 from tfbldr.plot import autoaspect
 from tfbldr.datasets import fetch_fruitspeech
@@ -31,8 +31,9 @@ minmin = np.inf
 maxmax = -np.inf
 
 for s in fruit["data"]:
-    minmin = min(minmin, s.min())
-    maxmax = max(maxmax, s.max())
+    si = s - s.mean()
+    minmin = min(minmin, si.min())
+    maxmax = max(maxmax, si.max())
 
 train_data = []
 valid_data = []
@@ -42,9 +43,10 @@ final_audio = []
 
 for n, s in enumerate(fruit["data"]):
     type_counts[fruit["target"][n]] += 1
+    s = s - s.mean()
     n_s = (s - minmin) / float(maxmax - minmin)
     n_s = 2 * n_s - 1
-    n_s = mu_law_encode(n_s, 256)
+    n_s = mu_law_transform(n_s, 256)
     if type_counts[fruit["target"][n]] == 15:
         valid_data.append(n_s)
     else:
@@ -154,7 +156,7 @@ def create_decoder(latent, bn_flag):
                          strides=l_dims[-5][-1],
                          border_mode=dbpad,
                          random_state=random_state)
-    l5_mix, l5_means, l5_lin_scales = DiscreteMixtureOfLogistics([l5], [1], n_components=5, name="d_out", random_state=random_state)
+    l5_mix, l5_means, l5_lin_scales = DiscreteMixtureOfLogistics([l5], [1], n_components=10, name="d_out", random_state=random_state)
     #s_l5 = Sigmoid(l5)
     #t_l5 = Tanh(l5)
     return l5_mix, l5_means, l5_lin_scales

@@ -7,6 +7,8 @@ import numpy as np
 from tfbldr.datasets import fetch_fruitspeech
 from tfbldr.datasets.audio import soundsc
 from tfbldr.datasets.audio import overlap
+from tfbldr.datasets.audio import mu_law_transform
+from tfbldr.datasets.audio import mu_law_inverse
 from tfbldr.plot import specgram
 from tfbldr.plot import specplot
 
@@ -40,8 +42,9 @@ minmin = np.inf
 maxmax = -np.inf
 
 for s in fruit["data"]:
-    minmin = min(minmin, s.min())
-    maxmax = max(maxmax, s.max())
+    si = s - s.mean()
+    minmin = min(minmin, si.min())
+    maxmax = max(maxmax, si.max())
 
 train_data = []
 valid_data = []
@@ -49,8 +52,10 @@ type_counts = defaultdict(lambda: 0)
 final_audio = []
 for n, s in enumerate(fruit["data"]):
     type_counts[fruit["target"][n]] += 1
+    s = s - s.mean()
     n_s = (s - minmin) / float(maxmax - minmin)
     n_s = 2 * n_s - 1
+    #n_s = mu_law_transform(n_s, 256)
     if type_counts[fruit["target"][n]] == 15:
         valid_data.append(n_s)
     else:
@@ -59,7 +64,7 @@ for n, s in enumerate(fruit["data"]):
 cut = 256
 # change to no overlap for now
 step = 16
-n_components = 5
+n_components = 10
 eval_batch_size = 500
 train_data = np.concatenate(train_data, axis=0)
 valid_data = np.concatenate(valid_data, axis=0)
@@ -113,10 +118,10 @@ with tf.Session(config=config) as sess:
         x_rec_samp_lin_scales = x_rec_samp_lin_scales[np.arange(len(x_rec_samp_lin_scales)), x_rec_samp_mix.flatten()].reshape(shp[:-1])
 
         u = sample_random_state.uniform(low=1E-5, high=1-1E-5, size=x_rec_samp_means.shape)
-        x_rec = x_rec_samp_means + x_rec_samp_lin_scales * (np.log(u) - np.log(1 - u))
-        from IPython import embed; embed(); raise ValueError()
-
-        all_x_rec.append(x_rec)
+        x_rec = x_rec_samp_means + np.exp(x_rec_samp_lin_scales) * (np.log(u) - np.log(1 - u))
+        #x_rec = np.clip(x_rec, -1., 1.)
+        #x_rec = mu_law_inverse(x_rec, 256)
+        all_x_rec.append(x_rec[..., None])
 
     x = all_x
     x_rec = np.concatenate(all_x_rec, axis=0)
