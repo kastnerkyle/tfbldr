@@ -992,7 +992,7 @@ def GaussianAttentionCell(list_of_step_inputs, list_of_step_input_dims,
         lb_t = tf.expand_dims(lb_t, axis=2)
         lk_t = tf.expand_dims(lk_t, axis=2)
         phi = tf.exp(-tf.square(lk_t - lu) * lb_t) * la_t
-        phi = tf.reduce_sum(phi, axis=1, keep_dims=True)
+        phi = tf.reduce_sum(phi, axis=1, keepdims=True)
         return phi
 
     phi_t = calc_phi(k_t, a_t, b_t, u)
@@ -1035,6 +1035,101 @@ def GaussianAttentionCell(list_of_step_inputs, list_of_step_input_dims,
     w_t = w_t[:, 0]
     w_t = tf.identity(w_t, name=name + "_post_weighting")
     return w_t, k_t, phi_t, state
+
+
+def DiscreteMixtureOfLogistics(list_of_inputs, list_of_input_dims,
+                               n_components=10, name=None,
+                               random_state=None, strict=None, init=None,
+                               log_eps=-7):
+    if name is None:
+        name = _get_name()
+    else:
+        name = name + "_dmol"
+
+    # assume all the same...
+    shp0 = _shape(list_of_inputs[0])
+    for li in list_of_inputs:
+        assert len(shp0) == len(_shape(li))
+    if len(shp0) == 4:
+        # https://github.com/openai/weightnorm/blob/master/tensorflow/nn.py#L30
+        # means and log_scales so * 2
+        l = Conv2d(list_of_inputs, list_of_input_dims, 2 * n_components + n_components, kernel_size=(1, 1),
+                   name=name + "_conv",
+                   random_state=random_state)
+    else:
+        raise ValueError("Input shapes have length {}, not currently supported".format(len(shp0)))
+    return l[..., :n_components], l[..., n_components:2 * n_components], l[..., 2 * n_components:]
+
+
+def log_prob_from_logits(x):
+    # based on https://github.com/openai/weightnorm/blob/master/tensorflow/nn.py#L30
+    """ numerically stable log_softmax implementation that prevents overflow """
+    axis = len(x.get_shape())-1
+    m = tf.reduce_max(x, axis, keepdims=True)
+    return x - m - tf.log(tf.reduce_sum(tf.exp(x-m), axis, keepdims=True))
+
+
+def DiscreteMixtureOfLogisticsCost(in_mixtures, in_means, in_lin_scales, target, bin_size,
+                                   min_log_eps=-5, max_log_eps=15):
+    """
+    based on https://github.com/openai/weightnorm/blob/master/tensorflow/nn.py#L30
+
+    use the output from DiscreteMixtureOfLogistics layer as inputs
+    expects bucketed targets in range 0, bin_size - 1
+
+    e.g. for images or 8 bit mu-law quantized audio, use bin_size=256
+    """
+    bin_size = bin_size - 1
+    if len(_shape(target)) != 4:
+        raise ValueError("Target shape != 4 currently unsupported")
+    # based on https://github.com/openai/weightnorm/blob/master/tensorflow/nn.py#L30
+    # original code has 100
+    # 10 * 2 * 3 + 3 * 10 +10
+    # 10 is for 10 mixtures in first term. 2 is for mean and scale
+    # 3 is for RGB
+    # 3*10 is the coefficients for each mixture. (specific for images. Read pixelCNN++)
+    # The last 10 is mixture components (softmax)
+    n_components = _shape(in_mixtures)[-1]
+    joint = tf.concat([in_mixtures, in_means, in_lin_scales], axis=-1)
+    from IPython import embed; embed(); raise ValueError()
+    shp = _shape(joint)
+    xs = _shape(target)
+    nr_mix = n_components
+    l = joint
+    x = target
+    xs = _shape(x)
+    logit_probs = l[:,:,:,:nr_mix]
+
+    l = l[:, :, :, nr_mix:][:, :, :, None, :]
+    means = l[:, :, :, :, :nr_mix]
+    log_scales = tf.maximum(l[:, :, :, :, nr_mix: 2 * nr_mix], min_log_eps)
+    # broadcast hacks to get it working
+    x = x[..., None] + tf.zeros([1, 1, 1, 1, n_components])
+    centered = x - means
+    inv_std = tf.exp(-log_scales)
+    plus_in = inv_std * (centered + 1. / float(bin_size))
+    cdf_plus = tf.nn.sigmoid(plus_in)
+    min_in = inv_std * (centered - 1. / float(bin_size))
+    cdf_min = tf.nn.sigmoid(min_in)
+    log_cdf_plus = plus_in - tf.nn.softplus(plus_in) # log probability for edge case of 0 (before scaling)
+    log_one_minus_cdf_min = -tf.nn.softplus(min_in) # log probability for edge case of 255 (before scaling)
+    cdf_delta = cdf_plus - cdf_min # probability for all other cases
+    mid_in = inv_std * centered
+    log_pdf_mid = mid_in - log_scales - 2. * tf.nn.softplus(mid_in) # log probability in the center of the bin, to be used in extreme cases (not actually used in our code)
+
+    # now select the right output: left edge case, right edge case, normal case, extremely low prob case (doesn't actually happen for us)
+
+    # this is what we are really doing, but using the robust version below for extreme cases in other applications and to avoid NaN issue with tf.select()
+    # log_probs = tf.select(x < -0.999, log_cdf_plus, tf.select(x > 0.999, log_one_minus_cdf_min, tf.log(cdf_delta)))
+
+    # robust version, that still works if probabilities are below 1e-5 (which never happens in our code)
+    # tensorflow backpropagates through tf.select() by multiplying with zero instead of selecting: this requires use to use some ugly tricks to avoid potential NaNs
+    # the 1e-12 in tf.maximum(cdf_delta, 1e-12) is never actually used as output, it's purely there to get around the tf.select() gradient issue
+    # if the probability on a sub-pixel is below 1e-5, we use an approximation based on the assumption that the log-density is constant in the bin of the observed sub-pixel value
+    log_probs = tf.where(x < -0.999, log_cdf_plus, tf.where(x > 0.999, log_one_minus_cdf_min, tf.where(cdf_delta > 1e-5, tf.log(tf.maximum(cdf_delta, 1e-12)), log_pdf_mid - np.log(bin_size / 2))))
+
+    log_probs = tf.reduce_sum(log_probs, axis=3) + log_prob_from_logits(logit_probs)
+    return -tf.reduce_sum(log_probs, [-1])
 
 
 def BernoulliAndCorrelatedGMM(
@@ -1211,7 +1306,6 @@ def BernoulliAndCorrelatedGMMCost(
     nll = -tf.log(rp + 1E-8) - tf.log(ep + 1E-8)
     nll = tf.reshape(nll, (-1, batch_size))
     return nll
-
 
 def BernoulliCrossEntropyCost(predicted, target, eps=1E-8):
     shpp = _shape(predicted)

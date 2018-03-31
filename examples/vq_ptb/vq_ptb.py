@@ -25,25 +25,28 @@ valid_itr = char_textfile_iterator("ptb_data/ptb.valid.txt", batch_size, seq_len
 
 random_state = np.random.RandomState(1177)
 
-n_hid = 512
+n_hid = 2048
 n_emb = 512
 n_inputs = len(train_itr.char2ind)
 rnn_init = "truncated_normal"
 forward_init = "truncated_normal"
+cell_dropout_scale = 0.9
 
-def create_model(inp_tm1, inp_t, h1_init, c1_init, h1_q_init, c1_q_init):
+def create_model(inp_tm1, inp_t, cell_dropout, h1_init, c1_init, h1_q_init, c1_q_init):
     oh_tm1 = OneHot(inp_tm1, n_inputs)
     p_tm1 = Linear([oh_tm1], [n_inputs], n_hid, random_state=random_state, name="proj",
                   init=forward_init)
     def step(x_t, h1_tm1, c1_tm1, h1_q_tm1, c1_q_tm1):
         output, s = LSTMCell([x_t], [n_hid], h1_tm1, c1_tm1, n_hid,
                              random_state=random_state,
+                             cell_dropout=cell_dropout,
                              name="rnn1", init=rnn_init)
         h1_t = s[0]
         c1_t = s[1]
 
         output, s = LSTMCell([h1_t], [n_hid], h1_q_tm1, c1_q_tm1, n_hid,
                              random_state=random_state,
+                             cll_dropout=cell_dropout,
                              name="rnn1_q", init=rnn_init)
         h1_cq_t = s[0]
         c1_q_t = s[1]
@@ -77,11 +80,12 @@ def create_graph():
         inputs = tf.placeholder(tf.float32, shape=[None, batch_size, 1])
         inputs_tm1 = inputs[:-1]
         inputs_t = inputs[1:]
+        cell_dropout = tf.placeholder_with_default(cell_dropout_scale * tf.ones(shape=[]), shape=[])
         init_hidden = tf.placeholder(tf.float32, shape=[batch_size, n_hid])
         init_cell = tf.placeholder(tf.float32, shape=[batch_size, n_hid])
         init_q_hidden = tf.placeholder(tf.float32, shape=[batch_size, n_hid])
         init_q_cell = tf.placeholder(tf.float32, shape=[batch_size, n_hid])
-        r = create_model(inputs_tm1, inputs_t, init_hidden, init_cell, init_q_hidden, init_q_cell)
+        r = create_model(inputs_tm1, inputs_t, cell_dropout, init_hidden, init_cell, init_q_hidden, init_q_cell)
         pred_sm, pred, hiddens, cells, q_hiddens, q_cells, q_nst_hiddens, q_nvq_hiddens, i_hiddens = r
         per_step_rec_loss = CategoricalCrossEntropyIndexCost(pred_sm, inputs_t)
         rec_loss = tf.reduce_mean(per_step_rec_loss)
@@ -105,6 +109,7 @@ def create_graph():
     things_names = ["inputs",
                     "inputs_tm1",
                     "inputs_t",
+                    "cell_dropout",
                     "init_hidden",
                     "init_cell",
                     "init_q_hidden",
@@ -124,6 +129,7 @@ def create_graph():
     things_tf = [inputs,
                  inputs_tm1,
                  inputs_t,
+                 cell_dropout,
                  init_hidden,
                  init_cell,
                  init_q_hidden,

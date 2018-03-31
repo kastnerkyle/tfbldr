@@ -27,7 +27,7 @@ config = tf.ConfigProto(
 
 batch_size = 20
 seq_length = 50
-n_hid = 512
+n_hid = 2048
 n_emb = 512
 valid_random_state = np.random.RandomState(7)
 # just to get char lookup
