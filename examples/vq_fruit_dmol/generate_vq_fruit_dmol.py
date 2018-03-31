@@ -119,8 +119,6 @@ with tf.Session(config=config) as sess:
 
         u = sample_random_state.uniform(low=1E-5, high=1-1E-5, size=x_rec_samp_means.shape)
         x_rec = x_rec_samp_means + np.exp(x_rec_samp_lin_scales) * (np.log(u) - np.log(1 - u))
-        #x_rec = np.clip(x_rec, -1., 1.)
-        #x_rec = mu_law_inverse(x_rec, 256)
         all_x_rec.append(x_rec[..., None])
 
     x = all_x
@@ -131,6 +129,9 @@ with tf.Session(config=config) as sess:
         t = x_rec[ni, 0]
         t = t[:, 0]
         rec_buf[ni * step:(ni * step) + cut] += t
+
+    rec_buf = np.clip(rec_buf, -1, 1)
+    #rec_buf = mu_law_inverse(rec_buf, 256)
 
     orig_buf = np.zeros((len(x) * step + 2 * cut))
     for ni in range(len(x)):

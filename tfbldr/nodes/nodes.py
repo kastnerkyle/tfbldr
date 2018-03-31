@@ -1060,9 +1060,20 @@ def DiscreteMixtureOfLogistics(list_of_inputs, list_of_input_dims,
     return l[..., :n_components], l[..., n_components:2 * n_components], l[..., 2 * n_components:]
 
 
+def log_sum_exp(x):
+    """ based on https://github.com/openai/weightnorm/blob/master/tensorflow/nn.py#L30
+        numerically stable log_sum_exp implementation that prevents overflow
+    """
+    axis = len(x.get_shape()) - 1
+    m = tf.reduce_max(x, axis)
+    m2 = tf.reduce_max(x, axis, keepdims=True)
+    return m + tf.log(tf.reduce_sum(tf.exp(x-m2), axis))
+
+
 def log_prob_from_logits(x):
-    # based on https://github.com/openai/weightnorm/blob/master/tensorflow/nn.py#L30
-    """ numerically stable log_softmax implementation that prevents overflow """
+    """ numerically stable log_softmax implementation that prevents overflow
+        based on https://github.com/openai/weightnorm/blob/master/tensorflow/nn.py#L30
+    """
     axis = len(x.get_shape())-1
     m = tf.reduce_max(x, axis, keepdims=True)
     return x - m - tf.log(tf.reduce_sum(tf.exp(x-m), axis, keepdims=True))
@@ -1079,7 +1090,7 @@ def DiscreteMixtureOfLogisticsCost(in_mixtures, in_means, in_lin_scales, target,
     num_bins is discretization interval
     e.g. for images or 8 bit mu-law quantized audio, common to use num_bins=256
     """
-    bin_size = num_bins - 1
+    bin_size = float(num_bins - 1)
     if len(_shape(target)) != 4:
         raise ValueError("Target shape != 4 currently unsupported")
     # based on https://github.com/openai/weightnorm/blob/master/tensorflow/nn.py#L30
@@ -1104,16 +1115,17 @@ def DiscreteMixtureOfLogisticsCost(in_mixtures, in_means, in_lin_scales, target,
     log_scales = tf.maximum(l[:, :, :, :, nr_mix: 2 * nr_mix], min_log_eps)
     # broadcast hacks to get it working
     x = x[..., None] + tf.zeros([1, 1, 1, 1, n_components])
-    centered = x - means
+    centered_x = x - means
     inv_std = tf.exp(-log_scales)
-    plus_in = inv_std * (centered + 1. / float(bin_size))
+    plus_in = inv_std * (centered_x + 1. / float(bin_size))
     cdf_plus = tf.nn.sigmoid(plus_in)
-    min_in = inv_std * (centered - 1. / float(bin_size))
+    min_in = inv_std * (centered_x - 1. / float(bin_size))
     cdf_min = tf.nn.sigmoid(min_in)
+
     log_cdf_plus = plus_in - tf.nn.softplus(plus_in) # log probability for edge case of 0 (before scaling)
     log_one_minus_cdf_min = -tf.nn.softplus(min_in) # log probability for edge case of 255 (before scaling)
     cdf_delta = cdf_plus - cdf_min # probability for all other cases
-    mid_in = inv_std * centered
+    mid_in = inv_std * centered_x
     log_pdf_mid = mid_in - log_scales - 2. * tf.nn.softplus(mid_in) # log probability in the center of the bin, to be used in extreme cases (not actually used in our code)
 
     # now select the right output: left edge case, right edge case, normal case, extremely low prob case (doesn't actually happen for us)
@@ -1128,7 +1140,8 @@ def DiscreteMixtureOfLogisticsCost(in_mixtures, in_means, in_lin_scales, target,
     log_probs = tf.where(x < -0.999, log_cdf_plus, tf.where(x > 0.999, log_one_minus_cdf_min, tf.where(cdf_delta > 1E-5, tf.log(tf.maximum(cdf_delta, 1E-12)), log_pdf_mid - np.log(bin_size / 2))))
 
     log_probs = tf.reduce_sum(log_probs, axis=3) + log_prob_from_logits(logit_probs)
-    return -tf.reduce_sum(log_probs, [-1])
+    a = log_sum_exp(log_probs)
+    return -a
 
 
 def BernoulliAndCorrelatedGMM(

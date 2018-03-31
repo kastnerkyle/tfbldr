@@ -46,7 +46,7 @@ for n, s in enumerate(fruit["data"]):
     s = s - s.mean()
     n_s = (s - minmin) / float(maxmax - minmin)
     n_s = 2 * n_s - 1
-    n_s = mu_law_transform(n_s, 256)
+    #n_s = mu_law_transform(n_s, 256)
     if type_counts[fruit["target"][n]] == 15:
         valid_data.append(n_s)
     else:
@@ -66,7 +66,7 @@ def _cuts(list_of_audio, cut, step):
     return real_final
 
 cut = 256
-step = 16
+step = 256
 train_audio = _cuts(train_data, cut, step)
 valid_audio = _cuts(valid_data, cut, step)
 
@@ -83,7 +83,7 @@ l3_dim = (257, 1, 4, [1, 1, 2, 1])
 l4_dim = (256, 1, 4, [1, 1, 2, 1])
 l5_dim = (257, 1, 1, [1, 1, 1, 1])
 embedding_dim = 512
-n_components = 5
+n_components = 10
 l_dims = [l1_dim, l2_dim, l3_dim, l4_dim, l5_dim]
 stride_div = np.prod([ld[-1] for ld in l_dims])
 ebpad = [0, 0, 4 // 2 - 1, 0]
@@ -156,7 +156,7 @@ def create_decoder(latent, bn_flag):
                          strides=l_dims[-5][-1],
                          border_mode=dbpad,
                          random_state=random_state)
-    l5_mix, l5_means, l5_lin_scales = DiscreteMixtureOfLogistics([l5], [1], n_components=10, name="d_out", random_state=random_state)
+    l5_mix, l5_means, l5_lin_scales = DiscreteMixtureOfLogistics([l5], [1], n_components=n_components, name="d_out", random_state=random_state)
     #s_l5 = Sigmoid(l5)
     #t_l5 = Tanh(l5)
     return l5_mix, l5_means, l5_lin_scales

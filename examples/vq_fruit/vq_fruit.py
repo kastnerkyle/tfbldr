@@ -10,6 +10,7 @@ from tfbldr.datasets import list_iterator
 from tfbldr.plot import get_viridis
 from tfbldr.plot import autoaspect
 from tfbldr.datasets import fetch_fruitspeech
+from tfbldr.datasets.audio import mu_law_transform
 from tfbldr import get_params_dict
 from tfbldr import run_loop
 import tensorflow as tf
@@ -27,8 +28,9 @@ minmin = np.inf
 maxmax = -np.inf
 
 for s in fruit["data"]:
-    minmin = min(minmin, s.min())
-    maxmax = max(maxmax, s.max())
+    si = s - s.mean()
+    minmin = min(minmin, si.min())
+    maxmax = max(maxmax, si.max())
 
 train_data = []
 valid_data = []
@@ -38,6 +40,7 @@ for n, s in enumerate(fruit["data"]):
     type_counts[fruit["target"][n]] += 1
     n_s = (s - minmin) / float(maxmax - minmin)
     n_s = 2 * n_s - 1
+    #n_s = mu_law_transform(n_s, 256)
     if type_counts[fruit["target"][n]] == 15:
         valid_data.append(n_s)
     else:

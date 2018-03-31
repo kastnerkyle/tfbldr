@@ -7,6 +7,8 @@ import numpy as np
 from tfbldr.datasets import fetch_fruitspeech
 from tfbldr.datasets.audio import soundsc
 from tfbldr.datasets.audio import overlap
+from tfbldr.datasets.audio import mu_law_transform
+from tfbldr.datasets.audio import mu_law_inverse
 from tfbldr.plot import specgram
 from tfbldr.plot import specplot
 
@@ -40,8 +42,9 @@ minmin = np.inf
 maxmax = -np.inf
 
 for s in fruit["data"]:
-    minmin = min(minmin, s.min())
-    maxmax = max(maxmax, s.max())
+    si = s - s.mean()
+    minmin = min(minmin, si.min())
+    maxmax = max(maxmax, si.max())
 
 train_data = []
 valid_data = []
@@ -51,6 +54,7 @@ for n, s in enumerate(fruit["data"]):
     type_counts[fruit["target"][n]] += 1
     n_s = (s - minmin) / float(maxmax - minmin)
     n_s = 2 * n_s - 1
+    #n_s = mu_law_transform(n_s, 256)
     if type_counts[fruit["target"][n]] == 15:
         valid_data.append(n_s)
     else:
@@ -89,7 +93,7 @@ with tf.Session(config=config) as sess:
         outs = [vs.z_e_x, vs.z_q_x, vs.z_i_x, vs.x_tilde]
         r = sess.run(outs, feed_dict=feed)
         x_rec = r[-1]
-        all_x_rec.append(x_rec)
+        all_x_rec.append(mu_law_inverse(x_rec, 256))
 
     x = all_x
     x_rec = np.concatenate(all_x_rec, axis=0)
