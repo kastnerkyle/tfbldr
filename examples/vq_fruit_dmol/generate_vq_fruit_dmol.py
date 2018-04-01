@@ -55,15 +55,15 @@ for n, s in enumerate(fruit["data"]):
     s = s - s.mean()
     n_s = (s - minmin) / float(maxmax - minmin)
     n_s = 2 * n_s - 1
-    #n_s = mu_law_transform(n_s, 256)
+    n_s = mu_law_transform(n_s, 256)
     if type_counts[fruit["target"][n]] == 15:
         valid_data.append(n_s)
     else:
         train_data.append(n_s)
 
 cut = 256
-step = 16
-sample = False
+step = 1
+sample = True
 n_components = 10
 eval_batch_size = 500
 train_data = np.concatenate(train_data, axis=0)
@@ -137,13 +137,19 @@ with tf.Session(config=config) as sess:
         t = t[:, 0]
         rec_buf[ni * step:(ni * step) + cut] += t
 
-    #rec_buf = mu_law_inverse(rec_buf, 256)
 
     orig_buf = np.zeros((len(x) * step + 2 * cut))
     for ni in range(len(x)):
         t = x[ni, 0]
         t = t[:, 0]
         orig_buf[ni * step:(ni * step) + cut] += t
+
+    # rescale it -1, 1
+    rec_buf = 2 * (rec_buf - rec_buf.min()) / (rec_buf.max() - rec_buf.min()) - 1
+    orig_buf = 2 * (orig_buf - orig_buf.min()) / (orig_buf.max() - orig_buf.min()) - 1
+
+    rec_buf = mu_law_inverse(rec_buf, 256)
+    orig_buf = mu_law_inverse(orig_buf, 256)
 
     x_o = orig_buf
     x_r = rec_buf

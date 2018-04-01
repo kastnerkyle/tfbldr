@@ -1323,6 +1323,7 @@ def BernoulliAndCorrelatedGMMCost(
     nll = tf.reshape(nll, (-1, batch_size))
     return nll
 
+
 def BernoulliCrossEntropyCost(predicted, target, eps=1E-8):
     shpp = _shape(predicted)
     shpt = _shape(target)
@@ -1336,9 +1337,6 @@ def BernoulliCrossEntropyCost(predicted, target, eps=1E-8):
 
 
 def CategoricalCrossEntropyCost(predicted, target, eps=1E-8):
-    """
-    ONLY WORKS FOR 1 HOT TARGETS, NO SOFT TARGETS
-    """
     ld_p = _shape(predicted)
     ld_t = _shape(target)
     if ld_p[-1] != ld_t[-1]:

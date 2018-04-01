@@ -46,7 +46,7 @@ for n, s in enumerate(fruit["data"]):
     s = s - s.mean()
     n_s = (s - minmin) / float(maxmax - minmin)
     n_s = 2 * n_s - 1
-    #n_s = mu_law_transform(n_s, 256)
+    n_s = mu_law_transform(n_s, 256)
     if type_counts[fruit["target"][n]] == 15:
         valid_data.append(n_s)
     else:
@@ -66,7 +66,7 @@ def _cuts(list_of_audio, cut, step):
     return real_final
 
 cut = 256
-step = 16
+step = 1
 train_audio = _cuts(train_data, cut, step)
 valid_audio = _cuts(valid_data, cut, step)
 
@@ -251,6 +251,6 @@ with tf.Session(graph=g) as sess:
     run_loop(sess,
              loop, train_itr,
              loop, valid_itr,
-             n_steps=50000,
-             n_train_steps_per=5000,
+             n_steps=150000,
+             n_train_steps_per=10000,
              n_valid_steps_per=250)
