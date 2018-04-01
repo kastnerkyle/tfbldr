@@ -93,7 +93,8 @@ with tf.Session(config=config) as sess:
         outs = [vs.z_e_x, vs.z_q_x, vs.z_i_x, vs.x_tilde]
         r = sess.run(outs, feed_dict=feed)
         x_rec = r[-1]
-        all_x_rec.append(mu_law_inverse(x_rec, 256))
+        #x_rec = mu_law_inverse(x_rec, 256)
+        all_x_rec.append(x_rec)
 
     x = all_x
     x_rec = np.concatenate(all_x_rec, axis=0)
