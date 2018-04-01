@@ -46,7 +46,7 @@ for n, s in enumerate(fruit["data"]):
     s = s - s.mean()
     n_s = (s - minmin) / float(maxmax - minmin)
     n_s = 2 * n_s - 1
-    n_s = mu_law_transform(n_s, 256)
+    #n_s = mu_law_transform(n_s, 256)
     if type_counts[fruit["target"][n]] == 15:
         valid_data.append(n_s)
     else:

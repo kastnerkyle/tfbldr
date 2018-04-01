@@ -38,8 +38,8 @@ def copytask_loader(batch_size, seq_width, min_len, max_len):
         yield inp.astype("float32"), outp.astype("float32")
 
 batch_size = 10
-seq_length_min = 5
-seq_length_max = 5
+seq_length_min = 1
+seq_length_max = 20
 seq_width = 8
 copy_itr = copytask_loader(batch_size, seq_width, seq_length_min, seq_length_max)
 a, b = next(copy_itr)
@@ -52,7 +52,7 @@ plt.savefig("b")
 
 random_state = np.random.RandomState(1177)
 
-n_hid = 128
+n_hid = 512
 n_emb = 512
 n_inputs = a.shape[-1]
 rnn_init = "truncated_normal"
@@ -196,6 +196,6 @@ with tf.Session(graph=g) as sess:
     run_loop(sess,
              loop, copy_itr,
              loop, copy_itr,
-             n_steps=100000,
-             n_train_steps_per=5000,
+             n_steps=200000,
+             n_train_steps_per=10000,
              n_valid_steps_per=0)

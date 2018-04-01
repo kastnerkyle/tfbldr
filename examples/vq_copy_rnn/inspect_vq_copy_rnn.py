@@ -49,10 +49,10 @@ def copytask_loader(batch_size, seq_width, min_len, max_len):
 
 batch_size = 10
 seq_length_min = 5
-seq_length_max = 5
+seq_length_max = 20
 seq_width = 8
 
-n_hid = 128
+n_hid = 512
 n_emb = 512
 
 copy_itr = copytask_loader(batch_size, seq_width, seq_length_min, seq_length_max)

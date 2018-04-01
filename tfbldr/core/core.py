@@ -605,6 +605,16 @@ def run_loop(sess,
             if train_stateful_args is not None:
                 this_train_stateful_args = r[-1]
             train_loss = r[0]
+            # use the first loss returned to do train best checkpoint
+            if hasattr(train_loss, "__len__"):
+                train_loss = train_loss[0]
+                all_train_losses = train_loss
+                # should only happen for first mb of each epoch
+                if len(this_train_loss) < len(all_train_losses):
+                    for i in range(len(all_train_losses)):
+                        this_train_loss.append([])
+            else:
+                all_train_losses = [train_loss]
             this_train_loss.append(train_loss)
             minibatch_time = e - s
             train_time_accumulator = 0 if len(cumulative_train_time) == 0 else cumulative_train_time[-1]
@@ -615,7 +625,8 @@ def run_loop(sess,
             minibatch_train_count.append(train_itr_steps_taken)
             if (i + 1) == n_train_steps_per or (time.time() - last_status) > status_every_s:
                 logger.info("train step {}/{}, overall train step {}".format(i + 1, n_train_steps_per, train_itr_steps_taken))
-                logger.info("train loss {}, overall train average {}".format(train_loss, np.mean(overall_train_loss + this_train_loss)))
+                for n, tl in enumerate(all_train_losses):
+                    logger.info("train loss {} {}, overall train average {}".format(n + 1, tl, np.mean(overall_train_loss + this_train_loss)))
                 logger.info(" ")
                 last_status = time.time()
         overall_train_loss += this_train_loss
@@ -637,6 +648,13 @@ def run_loop(sess,
                 if valid_stateful_args is not None:
                     this_valid_stateful_args = r[-1]
                 valid_loss = r[0]
+                # use the first loss returned to do train best checkpoint
+                if hasattr(train_loss, "__len__"):
+                    valid_loss = valid_loss[0]
+                    all_valid_losses = valid_loss
+                else:
+                    all_valid_losses = [valid_loss]
+
                 if valid_loss < min_valid_loss:
                     min_valid_loss = valid_loss
                     was_best_valid_loss = True
@@ -650,7 +668,8 @@ def run_loop(sess,
                 minibatch_valid_count.append(valid_itr_steps_taken)
                 if (i + 1) == n_valid_steps_per or (time.time() - last_status) > status_every_s:
                     logger.info("valid step {}/{}, overall valid step {}".format(i + 1, n_valid_steps_per, valid_itr_steps_taken))
-                    logger.info("valid loss {}, overall valid average {}".format(valid_loss, np.mean(overall_valid_loss + this_valid_loss)))
+                    for n, vl in all_valid_losses:
+                        logger.info("valid loss {} {}, overall valid average {}".format(n, valid_loss, np.mean(overall_valid_loss + this_valid_loss)))
                     logger.info(" ")
                     last_status = time.time()
             valid_interpd = [vi for vi in np.interp(np.arange(len(this_train_loss)), np.arange(len(this_valid_loss)), this_valid_loss)]
