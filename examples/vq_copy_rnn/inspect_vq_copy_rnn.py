@@ -48,7 +48,7 @@ def copytask_loader(batch_size, seq_width, min_len, max_len):
         yield inp.astype("float32"), outp.astype("float32")
 
 batch_size = 10
-seq_length_min = 5
+seq_length_min = 15
 seq_length_max = 20
 seq_width = 8
 
@@ -112,4 +112,42 @@ with tf.Session(config=config) as sess:
         axarr[i, 3].axis("off")
         axarr[i, 4].axis("off")
     plt.savefig("copy_res")
+    plt.close()
+
+    # now calculate stats
+    m = 100
+    s = 10
+    sls = np.arange(1, m + s + 1, s)
+    all_err = []
+    all_loss = []
+    all_pred = []
+    all_i_hid = []
+    for sl in sls:
+        print("Calculating accuracy for length {}".format(sl))
+        seq_length_min = sl
+        seq_length_max = sl
+        copy_itr = copytask_loader(batch_size, seq_width, seq_length_min, seq_length_max)
+
+        inps, targets = next(copy_itr)
+
+        feed = {vs.inputs: inps,
+                vs.targets: targets,
+                vs.init_hidden: init_h,
+                vs.init_cell: init_c,
+                vs.init_q_hidden: init_q_h,
+                vs.init_q_cell: init_q_c}
+        outs = [vs.pred_sig, vs.rec_loss, vs.hiddens, vs.cells, vs.q_hiddens, vs.q_cells, vs.i_hiddens]
+        r = sess.run(outs, feed_dict=feed)
+        all_pred.append(r[0])
+        all_i_hid.append(r[-1])
+        all_loss.append(r[1] * len(inps) * 1.44269504089)
+        all_err.append(np.mean(np.abs((r[0] > 0.5).astype("float32") - targets)))
+
+    plt.plot(sls, all_loss)
+    plt.savefig("loss")
+    plt.close()
+
+    plt.plot(sls, all_err)
+    plt.savefig("err")
+    plt.close()
     from IPython import embed; embed(); raise ValueError()
