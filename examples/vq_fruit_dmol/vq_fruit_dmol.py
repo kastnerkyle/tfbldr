@@ -66,7 +66,7 @@ def _cuts(list_of_audio, cut, step):
     return real_final
 
 cut = 256
-step = 256
+step = 16
 train_audio = _cuts(train_data, cut, step)
 valid_audio = _cuts(valid_data, cut, step)
 
@@ -84,6 +84,7 @@ l4_dim = (256, 1, 4, [1, 1, 2, 1])
 l5_dim = (257, 1, 1, [1, 1, 1, 1])
 embedding_dim = 512
 n_components = 10
+dmol_proj = 64
 l_dims = [l1_dim, l2_dim, l3_dim, l4_dim, l5_dim]
 stride_div = np.prod([ld[-1] for ld in l_dims])
 ebpad = [0, 0, 4 // 2 - 1, 0]
@@ -152,11 +153,11 @@ def create_decoder(latent, bn_flag):
     r_l4 = ReLU(bn_l4)
 
 
-    l5 = ConvTranspose2d([r_l4], [l_dims[-5][0]], 1, kernel_size=l_dims[-5][1:3], name="dec5",
+    l5 = ConvTranspose2d([r_l4], [l_dims[-5][0]], dmol_proj, kernel_size=l_dims[-5][1:3], name="dec5",
                          strides=l_dims[-5][-1],
                          border_mode=dbpad,
                          random_state=random_state)
-    l5_mix, l5_means, l5_lin_scales = DiscreteMixtureOfLogistics([l5], [1], n_components=n_components, name="d_out", random_state=random_state)
+    l5_mix, l5_means, l5_lin_scales = DiscreteMixtureOfLogistics([l5], [dmol_proj], n_components=n_components, name="d_out", random_state=random_state)
     #s_l5 = Sigmoid(l5)
     #t_l5 = Tanh(l5)
     return l5_mix, l5_means, l5_lin_scales

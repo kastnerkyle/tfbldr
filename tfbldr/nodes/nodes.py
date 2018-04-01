@@ -1137,7 +1137,11 @@ def DiscreteMixtureOfLogisticsCost(in_mixtures, in_means, in_lin_scales, target,
     # tensorflow backpropagates through tf.select() by multiplying with zero instead of selecting: this requires use to use some ugly tricks to avoid potential NaNs
     # the 1e-12 in tf.maximum(cdf_delta, 1e-12) is never actually used as output, it's purely there to get around the tf.select() gradient issue
     # if the probability on a sub-pixel is below 1E-5, we use an approximation based on the assumption that the log-density is constant in the bin of the observed sub-pixel value
+
     log_probs = tf.where(x < -0.999, log_cdf_plus, tf.where(x > 0.999, log_one_minus_cdf_min, tf.where(cdf_delta > 1E-5, tf.log(tf.maximum(cdf_delta, 1E-12)), log_pdf_mid - np.log(bin_size / 2))))
+
+    # definitely nan town
+    #log_probs = tf.where(x < -0.999, log_cdf_plus, tf.where(x > 0.999, log_one_minus_cdf_min, tf.log(cdf_delta)))
 
     log_probs = tf.reduce_sum(log_probs, axis=3) + log_prob_from_logits(logit_probs)
     a = log_sum_exp(log_probs)

@@ -62,8 +62,8 @@ for n, s in enumerate(fruit["data"]):
         train_data.append(n_s)
 
 cut = 256
-# change to no overlap for now
 step = 16
+sample = False
 n_components = 10
 eval_batch_size = 500
 train_data = np.concatenate(train_data, axis=0)
@@ -108,17 +108,24 @@ with tf.Session(config=config) as sess:
         shp = x_rec_means.shape
         x_rec_lin_scales = np.maximum(x_rec_lin_scales, -7)
 
-        # gumbel sample
-        # http://amid.fish/humble-gumbel
-        x_rec_samp_mix = np.argmax(x_rec_mix - np.log(-np.log(sample_random_state.uniform(low=1E-5, high=1-1E-5, size=x_rec_mix.shape))), axis=-1)
+        if sample:
+            # gumbel sample
+            # http://amid.fish/humble-gumbel
+            x_rec_samp_mix = np.argmax(x_rec_mix - np.log(-np.log(sample_random_state.uniform(low=1E-5, high=1-1E-5, size=x_rec_mix.shape))), axis=-1)
+        else:
+            x_rec_samp_mix = np.argmax(x_rec_mix, axis=-1)
+
         x_rec_samp_means = x_rec_means.reshape((-1, shp[-1]))
         x_rec_samp_means = x_rec_samp_means[np.arange(len(x_rec_samp_means)), x_rec_samp_mix.flatten()].reshape(shp[:-1])
 
         x_rec_samp_lin_scales = x_rec_lin_scales.reshape((-1, shp[-1]))
         x_rec_samp_lin_scales = x_rec_samp_lin_scales[np.arange(len(x_rec_samp_lin_scales)), x_rec_samp_mix.flatten()].reshape(shp[:-1])
 
-        u = sample_random_state.uniform(low=1E-5, high=1-1E-5, size=x_rec_samp_means.shape)
+        u = sample_random_state.uniform(low=1E-5, high=1 - 1E-5, size=x_rec_samp_means.shape)
+        if not sample:
+            u = 0. * u + 0.5
         x_rec = x_rec_samp_means + np.exp(x_rec_samp_lin_scales) * (np.log(u) - np.log(1 - u))
+        x_rec = np.clip(x_rec, -1, 1)
         all_x_rec.append(x_rec[..., None])
 
     x = all_x
@@ -130,7 +137,6 @@ with tf.Session(config=config) as sess:
         t = t[:, 0]
         rec_buf[ni * step:(ni * step) + cut] += t
 
-    rec_buf = np.clip(rec_buf, -1, 1)
     #rec_buf = mu_law_inverse(rec_buf, 256)
 
     orig_buf = np.zeros((len(x) * step + 2 * cut))
