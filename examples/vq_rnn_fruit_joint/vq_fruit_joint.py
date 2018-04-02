@@ -10,8 +10,9 @@ from tfbldr.nodes import OneHot
 from tfbldr.nodes import Softmax
 from tfbldr.nodes import LSTMCell
 from tfbldr.nodes import CategoricalCrossEntropyIndexCost
+from tfbldr.nodes import CategoricalCrossEntropyLinearIndexCost
 from tfbldr.nodes import BernoulliCrossEntropyCost
-from tfbldr.datasets import list_iterator
+from tfbldr.datasets import ordered_list_iterator
 from tfbldr.plot import get_viridis
 from tfbldr.plot import autoaspect
 from tfbldr.datasets import fetch_fruitspeech
@@ -21,6 +22,7 @@ from tfbldr import scan
 import tensorflow as tf
 import numpy as np
 from collections import namedtuple, defaultdict
+import itertools
 
 viridis_cm = get_viridis()
 import matplotlib
@@ -57,18 +59,20 @@ def _cuts(list_of_audio, cut, step):
     # make many overlapping cuts
     # 8k, this means offset is ~4ms @ step of 32
     real_final = []
-    for s in list_of_audio:
+    real_idx = []
+    for n, s in enumerate(list_of_audio):
         # cut off the end
         s = s[:len(s) - len(s) % step]
         starts = np.arange(0, len(s) - cut + step, step)
         for st in starts:
             real_final.append(s[st:st + cut][None, :, None])
-    return real_final
+            real_idx.append(n)
+    return real_final, real_idx
 
 cut = 256
-step = 16
-train_audio = _cuts(train_data, cut, step)
-valid_audio = _cuts(valid_data, cut, step)
+step = 1
+train_audio, train_audio_idx = _cuts(train_data, cut, step)
+valid_audio, valid_audio_idx = _cuts(valid_data, cut, step)
 
 random_state = np.random.RandomState(1999)
 l1_dim = (64, 1, 4, [1, 1, 2, 1])
@@ -78,15 +82,17 @@ l3_dim = (257, 1, 4, [1, 1, 2, 1])
 l4_dim = (256, 1, 4, [1, 1, 2, 1])
 l5_dim = (257, 1, 1, [1, 1, 1, 1])
 embedding_dim = 512
-batch_size = 50
+vqvae_batch_size = 50
+rnn_batch_size = 50
 n_hid = 512
 n_clusters = 64
 # goes from 256 -> 16
 hardcoded_z_len = 16
 # reserve 0 for "start code"
-#n_inputs = hardcoded_z_len * embedding_dim + 1
-# reserve 0 for start code
 n_inputs = embedding_dim + 1
+switch_step = 10000
+both = True
+# reserve 0 for start code
 
 rnn_init = "truncated_normal"
 forward_init = "truncated_normal"
@@ -98,8 +104,14 @@ dbpad = [0, 0, 4 // 2 - 1, 0]
 
 train_itr_random_state = np.random.RandomState(1122)
 valid_itr_random_state = np.random.RandomState(12)
-train_itr = list_iterator([train_audio], batch_size, random_state=train_itr_random_state)
-valid_itr = list_iterator([valid_audio], batch_size, random_state=valid_itr_random_state)
+train_itr = ordered_list_iterator([train_audio], train_audio_idx, vqvae_batch_size, random_state=train_itr_random_state)
+valid_itr = ordered_list_iterator([valid_audio], valid_audio_idx, vqvae_batch_size, random_state=valid_itr_random_state)
+
+"""
+for i in range(10000):
+    tt = train_itr.next_batch()
+    # tt[0][3][:, :16] == tt[0][2][:, 16:32]
+"""
 
 
 def create_encoder(inp, bn_flag):
@@ -254,18 +266,19 @@ def create_graph():
         # rnn part
         # ultimately we will use 2 calls to feed_dict to make lookup mappings easier, but could do it like this
         #rnn_inputs = tf.cast(tf.stop_gradient(tf.transpose(z_i_x, (2, 0, 1))), tf.float32)
-        rnn_inputs = tf.placeholder(tf.float32, shape=[None, batch_size, 1])
+        rnn_inputs = tf.placeholder(tf.float32, shape=[None, rnn_batch_size, 1])
         rnn_inputs_tm1 = rnn_inputs[:-1]
         rnn_inputs_t = rnn_inputs[1:]
 
-        init_hidden = tf.placeholder(tf.float32, shape=[batch_size, n_hid])
-        init_cell = tf.placeholder(tf.float32, shape=[batch_size, n_hid])
-        init_q_hidden = tf.placeholder(tf.float32, shape=[batch_size, n_hid])
-        init_q_cell = tf.placeholder(tf.float32, shape=[batch_size, n_hid])
+        init_hidden = tf.placeholder(tf.float32, shape=[rnn_batch_size, n_hid])
+        init_cell = tf.placeholder(tf.float32, shape=[rnn_batch_size, n_hid])
+        init_q_hidden = tf.placeholder(tf.float32, shape=[rnn_batch_size, n_hid])
+        init_q_cell = tf.placeholder(tf.float32, shape=[rnn_batch_size, n_hid])
         r = create_vqrnn(rnn_inputs_tm1, rnn_inputs_t, init_hidden, init_cell, init_q_hidden, init_q_cell)
         pred_sm, pred, hiddens, cells, q_hiddens, q_cells, q_nst_hiddens, q_nvq_hiddens, i_hiddens, oh_tm1 = r
 
         rnn_rec_loss = tf.reduce_mean(CategoricalCrossEntropyIndexCost(pred_sm, rnn_inputs_t))
+        #rnn_rec_loss = tf.reduce_mean(CategoricalCrossEntropyLinearIndexCost(pred, rnn_inputs_t))
 
         rnn_alpha = 1.
         rnn_beta = 0.25
@@ -320,37 +333,66 @@ def create_graph():
 
 g, vs = create_graph()
 
+rnn_train = False
+step = 0
+
 def loop(sess, itr, extras, stateful_args):
     x, = itr.next_batch()
-    init_h = np.zeros((batch_size, n_hid)).astype("float32")
-    init_c = np.zeros((batch_size, n_hid)).astype("float32")
-    init_q_h = np.zeros((batch_size, n_hid)).astype("float32")
-    init_q_c = np.zeros((batch_size, n_hid)).astype("float32")
+
+    init_h = np.zeros((rnn_batch_size, n_hid)).astype("float32")
+    init_c = np.zeros((rnn_batch_size, n_hid)).astype("float32")
+    init_q_h = np.zeros((rnn_batch_size, n_hid)).astype("float32")
+    init_q_c = np.zeros((rnn_batch_size, n_hid)).astype("float32")
+    global rnn_train
+    global step
     if extras["train"]:
-        feed = {vs.vqvae_inputs: x,
-                vs.bn_flag: 0.}
-        outs = [vs.vqvae_rec_loss, vs.vqvae_loss, vs.vqvae_train_step, vs.z_i_x]
-        r = sess.run(outs, feed_dict=feed)
-        vqvae_l = r[0]
-        vqvae_t_l = r[1]
-        vqvae_step = r[2]
+        step += 1
+        if step > switch_step:
+            rnn_train = True
+        if both or not rnn_train:
+            feed = {vs.vqvae_inputs: x,
+                    vs.bn_flag: 0.}
+            outs = [vs.vqvae_rec_loss, vs.vqvae_loss, vs.vqvae_train_step, vs.z_i_x]
+            r = sess.run(outs, feed_dict=feed)
+            vqvae_l = r[0]
+            vqvae_t_l = r[1]
+            vqvae_step = r[2]
+        if rnn_train:
+            feed = {vs.vqvae_inputs: x,
+                    vs.bn_flag: 1.}
+            outs = [vs.vqvae_rec_loss, vs.z_i_x]
+            r = sess.run(outs, feed_dict=feed)
+            vqvae_l = r[0]
+            vqvae_t_l = r[1]
 
         discrete_z = r[-1]
+        #discrete_z[3][:, 2:-2] == discrete_z[4][:, 1:-3]
+        #discrete_z = discrete_z[:, :, 1:-2]
         shp = discrete_z.shape
         # always start with 0
         rnn_inputs = np.zeros((shp[2] + 1, shp[0], shp[1]))
         rnn_inputs[1:] = discrete_z.transpose(2, 0, 1) + 1.
 
-        feed = {vs.rnn_inputs: rnn_inputs,
-                vs.init_hidden: init_h,
-                vs.init_cell: init_c,
-                vs.init_q_hidden: init_q_h,
-                vs.init_q_cell: init_q_c}
-        outs = [vs.rnn_rec_loss, vs.rnn_loss, vs.rnn_train_step]
-        r = sess.run(outs, feed_dict=feed)
-        rnn_l = r[0]
-        rnn_t_l = r[1]
-        rnn_step = r[2]
+        if both or rnn_train:
+            feed = {vs.rnn_inputs: rnn_inputs,
+                    vs.init_hidden: init_h,
+                    vs.init_cell: init_c,
+                    vs.init_q_hidden: init_q_h,
+                    vs.init_q_cell: init_q_c}
+            outs = [vs.rnn_rec_loss, vs.rnn_loss, vs.rnn_train_step]
+            r = sess.run(outs, feed_dict=feed)
+            rnn_l = r[0]
+            rnn_t_l = r[1]
+            rnn_step = r[2]
+        if not rnn_train:
+            feed = {vs.rnn_inputs: rnn_inputs,
+                    vs.init_hidden: init_h,
+                    vs.init_cell: init_c,
+                    vs.init_q_hidden: init_q_h,
+                    vs.init_q_cell: init_q_c}
+            outs = [vs.rnn_rec_loss]
+            r = sess.run(outs, feed_dict=feed)
+            rnn_l = r[0]
     else:
         feed = {vs.vqvae_inputs: x,
                 vs.bn_flag: 1.}
@@ -359,6 +401,7 @@ def loop(sess, itr, extras, stateful_args):
         vqvae_l = r[0]
 
         discrete_z = r[-1]
+        #discrete_z = discrete_z[:, :, 1:-2]
         shp = discrete_z.shape
         # always start with 0
         rnn_inputs = np.zeros((shp[2] + 1, shp[0], shp[1]))

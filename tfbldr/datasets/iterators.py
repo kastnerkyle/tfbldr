@@ -19,6 +19,7 @@ import exceptions
 import subprocess
 import copy
 import shutil
+import itertools
 import xml
 import xml.etree.cElementTree as ElementTree
 import HTMLParser
@@ -27,6 +28,8 @@ import operator
 import gzip
 import struct
 import array
+import copy
+
 from .audio import stft
 
 from ..core import download
@@ -168,6 +171,98 @@ class list_iterator(object):
             next_batches.append(t)
         self.indices_ = self.random_state.choice(self.iteration_args_lengths_[0],
                                                  size=(self.batch_size,), replace=False)
+        return next_batches
+
+
+class ordered_list_iterator(object):
+    def __init__(self, list_of_iteration_args, index_list, batch_size,
+                 one_hot_size=None, random_state=None):
+        """
+        one_hot_size
+        should be either None, or a list of one hot size desired
+        same length as list_of_iteration_args
+
+        index list should tell whether or not some indexes are "grouped"
+
+        list_of_iteration_args = [my_image_data, my_label_data]
+        one_hot_size = [None, 10]
+        """
+        self.list_of_iteration_args = list_of_iteration_args
+        self.batch_size = batch_size
+
+        self.random_state = random_state
+        if random_state is None:
+            raise ValueError("Must pass random state for random selection")
+
+        self.one_hot_size = one_hot_size
+        if one_hot_size is not None:
+            assert len(one_hot_size) == len(list_of_iteration_args)
+
+        iteration_args_lengths = []
+        iteration_args_dims = []
+        for n, ts in enumerate(list_of_iteration_args):
+            c = [(li, np.array(tis).shape) for li, tis in enumerate(ts)]
+            if len(iteration_args_lengths) > 0:
+                assert c[-1][0] == iteration_args_lengths[-1]
+                assert c[-1][1] == iteration_args_dims[-1]
+            iteration_args_lengths.append(c[-1][0] + 1)
+            iteration_args_dims.append(c[-1][1])
+        self.iteration_args_lengths_ = iteration_args_lengths
+        self.iteration_args_dims_ = iteration_args_dims
+
+        # set up the matrices to slice one_hot indexes out of
+        # todo: setup slice functions? or just keep handling in next_batch
+        if one_hot_size is None:
+            self._oh_slicers = [None] * len(list_of_iteration_args)
+        else:
+            self._oh_slicers = []
+            for ooh in one_hot_size:
+                if ooh is None:
+                    self._oh_slicers.append(None)
+                else:
+                    self._oh_slicers.append(np.eye(ooh, dtype=np.float32))
+
+        self.index_list = index_list
+        if len(self.index_list) != self.iteration_args_lengths_[0]:
+            raise ValueError("index_list must have same length as iterations args, got {} and {}".format(len(self.index_list), self.iteration_args_lengths_[0]))
+        self.index_set = sorted(list(set(index_list)))
+        self.index_groups = {k: np.array([n for n, i in enumerate(index_list) if i == k]) for k in self.index_set}
+
+        shuf_set = copy.copy(self.index_set)
+        self.random_state.shuffle(shuf_set)
+        self.all_index_ = np.array([i for i in shuf_set for ii in self.index_groups[i]])
+        self.all_indices_ = np.array([ii for i in shuf_set for ii in self.index_groups[i]])
+        self.all_indices_ = self.all_indices_[:len(self.all_indices_) - len(self.all_indices_) % self.batch_size]
+
+        self.indices_offset_ = 0
+        self.indices_ = self.all_indices_[self.indices_offset_:self.indices_offset_ + self.batch_size]
+        self.index_ = self.all_index_[self.indices_offset_:self.indices_offset_ + self.batch_size]
+        self.indices_offset_ += self.batch_size
+
+
+    def next_batch(self):
+        next_batches = []
+        for l in range(len(self.list_of_iteration_args)):
+            if self._oh_slicers[l] is None:
+                t = np.zeros([self.batch_size] + list(self.iteration_args_dims_[l]), dtype=np.float32)
+            else:
+                t = np.zeros([self.batch_size] + list(self.iteration_args_dims_[l])[:-1] + [self._oh_slicers[l].shape[-1]], dtype=np.float32)
+            for bi in range(self.batch_size):
+                t[bi] = self.list_of_iteration_args[l][self.indices_[bi]]
+            next_batches.append(t)
+
+        this_index = self.index_
+
+        if self.indices_offset_ + self.batch_size >= len(self.all_indices_):
+            shuf_set = copy.copy(self.index_set)
+            self.random_state.shuffle(shuf_set)
+            self.all_index_ = np.array([i for i in shuf_set for ii in self.index_groups[i]])
+            self.all_indices_ = np.array([ii for i in shuf_set for ii in self.index_groups[i]])
+            self.all_indices_ = self.all_indices_[:len(self.all_indices_) - len(self.all_indices_) % self.batch_size]
+            self.indices_offset_ = 0
+        self.indices_ = self.all_indices_[self.indices_offset_:self.indices_offset_ + self.batch_size]
+        self.index_ = self.all_index_[self.indices_offset_:self.indices_offset_ + self.batch_size]
+        self.indices_offset_ += self.batch_size
         return next_batches
 
 

@@ -598,7 +598,7 @@ def run_loop(sess,
         assert n_train_steps_per >= 1
         this_train_loss = []
         train_start_time = time.time()
-        for i in range(n_train_steps_per):
+        for tsi in range(n_train_steps_per):
             s = time.time()
             r = train_loop_function(sess, train_itr, extras, this_train_stateful_args)
             e = time.time()
@@ -632,7 +632,7 @@ def run_loop(sess,
             train_itr_steps_taken += 1
             minibatch_train_count.append(train_itr_steps_taken)
             if (i + 1) == n_train_steps_per or (time.time() - last_status) > status_every_s:
-                logger.info("train step {}/{}, overall train step {}".format(i + 1, n_train_steps_per, train_itr_steps_taken))
+                logger.info("train step {}/{}, overall train step {}".format(tsi + 1, n_train_steps_per, train_itr_steps_taken))
                 for n, tl in enumerate(all_train_loss):
                     logger.info("train loss {} {}, overall train average {}".format(n + 1, tl, np.mean(overall_train_loss[n] + this_train_loss[n])))
                 logger.info(" ")
@@ -650,7 +650,7 @@ def run_loop(sess,
         if n_valid_steps_per > 0:
             this_valid_loss = []
             valid_start_time = time.time()
-            for i in range(n_valid_steps_per):
+            for vsi in range(n_valid_steps_per):
                 s = time.time()
                 r = valid_loop_function(sess, valid_itr, extras, this_valid_stateful_args)
                 e = time.time()
@@ -687,9 +687,9 @@ def run_loop(sess,
                 valid_itr_steps_taken += 1
                 minibatch_valid_count.append(valid_itr_steps_taken)
                 if (i + 1) == n_valid_steps_per or (time.time() - last_status) > status_every_s:
-                    logger.info("valid step {}/{}, overall valid step {}".format(i + 1, n_valid_steps_per, valid_itr_steps_taken))
+                    logger.info("valid step {}/{}, overall valid step {}".format(vsi + 1, n_valid_steps_per, valid_itr_steps_taken))
                     for n, vl in enumerate(all_valid_loss):
-                        logger.info("valid loss {} {}, overall valid average {}".format(n, valid_loss, np.mean(overall_valid_loss[n] + this_valid_loss[n])))
+                        logger.info("valid loss {} {}, overall valid average {}".format(n, vl, np.mean(overall_valid_loss[n] + this_valid_loss[n])))
                     logger.info(" ")
                     last_status = time.time()
             for i in range(len(this_valid_loss)):
