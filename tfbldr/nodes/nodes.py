@@ -280,7 +280,7 @@ def make_numpy_biases(bias_dims):
 
 
 def make_numpy_weights(in_dim, out_dims, random_state, init=None,
-                       scale="default"):
+                       scale="default", name=""):
     """
     Will return as many things as are in the list of out_dims
     You *must* get a list back, even for 1 element
@@ -292,26 +292,38 @@ def make_numpy_weights(in_dim, out_dims, random_state, init=None,
     fs = [scale] * len(out_dims)
     for i, out_dim in enumerate(out_dims):
         if init is None:
+            logger.info("Initializing {} with {} init".format(name, "ortho"))
+            ff[i] = np_ortho
+            fs[i] = 1.
+            '''
             if in_dim == out_dim:
+                logger.info("Initializing {} with {} init".format(name, "ortho"))
                 ff[i] = np_ortho
                 fs[i] = 1.
             else:
+                logger.info("Initializing {} with {} init".format(name, "variance_scaled_uniform"))
                 ff[i] = np_variance_scaled_uniform
                 fs[i] = 1.
+            '''
         elif init == "ortho":
+            logger.info("Initializing {} with {} init".format(name, "ortho"))
             if in_dim != out_dim:
                 raise ValueError("Unable to use ortho init for non-square matrices!")
             ff[i] = np_ortho
             fs[i] = 1.
         elif init == "glorot_uniform":
+            logger.info("Initializing {} with {} init".format(name, "glorot_uniform"))
             ff[i] = np_glorot_uniform
         elif init == "normal":
+            logger.info("Initializing {} with {} init".format(name, "normal"))
             ff[i] = np_normal
             fs[i] = 0.01
         elif init == "truncated_normal":
+            logger.info("Initializing {} with {} init".format(name, "truncated_normal"))
             ff[i] = np_truncated_normal
             fs[i] = 0.075
         elif init == "embedding_normal":
+            logger.info("Initializing {} with {} init".format(name, "embedding_normal"))
             ff[i] = np_truncated_normal
             fs[i] = 1. / np.sqrt(out_dim)
         else:
@@ -364,10 +376,10 @@ def VqEmbedding(input_tensor, input_dim, embedding_dim,
     try:
         emb = _get_shared(name_w)
     except NameError:
-        logger.info("VqEmbedding layer {} initialized using init {}".format(name, init))
+        #logger.info("VqEmbedding layer {} initialized using init {}".format(name, init))
         embedding_weight, = make_numpy_weights(input_dim, [embedding_dim],
                                                random_state, init=init,
-                                               scale=scale)
+                                               scale=scale, name=name_w)
         embedding_weight = embedding_weight.transpose(1, 0)
         emb = tf.Variable(embedding_weight, trainable=True)
         _set_shared(name_w, emb)
@@ -412,9 +424,8 @@ def VqEmbedding(input_tensor, input_dim, embedding_dim,
 
 
 def Embedding(indices, n_symbols, output_dim, random_state=None,
-              init="gaussian",
+              init="embedding_normal", scale=1.,
               strict=None, name=None):
-    raise ValueError("Embedding not yet finalized - return embedded vectors and embed space itself")
     """
     Last dimension of indices tensor must be 1!!!!
     """
@@ -434,14 +445,15 @@ def Embedding(indices, n_symbols, output_dim, random_state=None,
         if name_w in cur_defs:
             raise ValueError("Name {} already created in params dict!".format(name_w))
 
-    if init != "gaussian":
+    if init != "embedding_normal":
         raise ValueError("Currently unsupported init type {}".format(init))
 
     try:
         vectors = _get_shared(name_w)
     except NameError:
-        logger.info("Linear layer {} initialized using init {}".format(name, init))
-        vectors_weight = random_state.randn(n_symbols, output_dim).astype("float32")
+        vectors_weight, = make_numpy_weights(n_symbols, [output_dim],
+                                             random_state, init=init,
+                                             scale=scale, name=name_w)
         vectors = tf.Variable(vectors_weight, trainable=True)
         _set_shared(name_w, vectors)
 
@@ -455,7 +467,7 @@ def Embedding(indices, n_symbols, output_dim, random_state=None,
         else:
             raise ValueError("Embedding layer input must have last dimension 1 for input size > 3D, got {}".format(shp))
 
-    shp = shape(ii)
+    shp = _shape(ii)
     nd = len(shp)
     lu = tf.nn.embedding_lookup(vectors, ii)
     if nd == 3:
@@ -475,14 +487,6 @@ def Linear(list_of_inputs, list_of_input_dims, output_dim, random_state=None,
     nd = _ndim(list_of_inputs[0])
     input_var = tf.concat(list_of_inputs, axis=nd - 1)
     input_dim = sum(list_of_input_dims)
-    if init is None or type(init) is str:
-        logger.info("Linear layer {} initialized using init {}".format(name, init))
-        weight_values, = make_numpy_weights(input_dim, [output_dim],
-                                            random_state=random_state,
-                                            init=init, scale=scale)
-    else:
-        # rely on announcement from parent class
-        weight_values=init[0]
 
     if name is None:
         name = _get_name()
@@ -490,6 +494,16 @@ def Linear(list_of_inputs, list_of_input_dims, output_dim, random_state=None,
     name_w = name + "_linear_w"
     name_b = name + "_linear_b"
     name_out = name + "_linear_out"
+
+    if init is None or type(init) is str:
+        #logger.info("Linear layer {} initialized using init {}".format(name, init))
+        weight_values, = make_numpy_weights(input_dim, [output_dim],
+                                            random_state=random_state,
+                                            init=init, scale=scale, name=name_w)
+    else:
+        # rely on announcement from parent class
+        weight_values=init[0]
+
 
     if strict is None:
         strict = get_strict_mode_default()
@@ -576,11 +590,11 @@ def Conv2d(list_of_inputs, list_of_input_dims, num_feature_maps,
                                         [(num_feature_maps, kernel_size[0], kernel_size[1])],
                                         init=init,
                                         scale=scale,
-                                        random_state=random_state)
+                                        random_state=random_state, name=name_w)
     try:
         weight = _get_shared(name_w)
     except NameError:
-        logger.info("Conv2d layer {} initialized using init {}".format(name, init))
+        #logger.info("Conv2d layer {} initialized using init {}".format(name, init))
         weight = tf.Variable(weight_values, trainable=True, name=name_w)
         _set_shared(name_w, weight)
 
@@ -673,14 +687,14 @@ def ConvTranspose2d(list_of_inputs, list_of_input_dims, num_feature_maps,
                                         [(num_feature_maps, kernel_size[0], kernel_size[1])],
                                         init=init,
                                         scale=scale,
-                                        random_state=random_state)
+                                        random_state=random_state, name=name_w)
     # transpose out and in to match transpose behavior
     # TODO: does this also change init scales?
     weight_values = weight_values.transpose(0, 1, 3, 2)
     try:
         weight = _get_shared(name_w)
     except NameError:
-        logger.info("ConvTranspose2d layer {} initialized using init {}".format(name, init))
+        #logger.info("ConvTranspose2d layer {} initialized using init {}".format(name, init))
         weight = tf.Variable(weight_values, trainable=True, name=name_w)
         _set_shared(name_w, weight)
 
@@ -844,7 +858,11 @@ def LSTMCell(list_of_inputs, list_of_input_dims,
     input_dim = sum(list_of_input_dims)
     hidden_dim = 4 * num_units
 
-    if init is None or init == "truncated_normal":
+    if init is None:
+        inp_init = None
+        h_init = None
+        out_init = None
+    elif init == "truncated_normal":
         inp_init = "truncated_normal"
         h_init = "truncated_normal"
         out_init = "truncated_normal"
@@ -859,17 +877,18 @@ def LSTMCell(list_of_inputs, list_of_input_dims,
     else:
         raise ValueError("Unknown init argument {}".format(init))
 
+    name_w = name + "_lstm_proj"
     comb_w_np, = make_numpy_weights(input_dim + num_units, [hidden_dim],
                                     random_state=random_state,
-                                    init=inp_init)
+                                    init=inp_init, name=name_w)
     comb_b_np, = make_numpy_biases([hidden_dim])
 
-    logger.info("LSTMCell {} input to hidden initialized using init {}".format(name, inp_init))
-    logger.info("LSTMCell {} hidden to hidden initialized using init {}".format(name, h_init))
+    #logger.info("LSTMCell {} input to hidden initialized using init {}".format(name, inp_init))
+    #logger.info("LSTMCell {} hidden to hidden initialized using init {}".format(name, h_init))
     lstm_proj = Linear(list_of_inputs + [previous_hidden], list_of_input_dims + [hidden_dim],
                        hidden_dim,
                        random_state=random_state,
-                       name=name + "_lstm_proj",
+                       name=name_w,
                        init=(comb_w_np, comb_b_np), strict=strict)
 
     i, j, f, o = tf.split(lstm_proj, 4, axis=-1)
@@ -889,15 +908,16 @@ def LSTMCell(list_of_inputs, list_of_input_dims,
         h = input_mask[:, None] * h + (1. - input_mask[:, None]) * h
 
     if output_dim is not None:
+        name_out = name + "_lstm_h_to_out",
         h_to_out_w_np, = make_numpy_weights(num_units, [output_dim],
                                             random_state=random_state,
-                                            init=out_init)
+                                            init=out_init, name=name_out)
         h_to_out_b_np, = make_numpy_biases([output_dim])
         h_to_out = Linear([h], [num_units], output_dim, random_state=random_state,
-                          name=name + "_lstm_h_to_out",
+                          name=name_out,
                           init=(h_to_out_w_np, h_to_out_b_np), strict=strict)
         final_out = h_to_out
-        logger.info("LSTMCell {} hidden to output initialized using init {}".format(name, out_init))
+        #logger.info("LSTMCell {} hidden to output initialized using init {}".format(name, out_init))
     else:
         final_out = h
     return final_out, (h, c)
