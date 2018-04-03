@@ -264,7 +264,7 @@ def np_ortho(shape, random_state, scale=1.):
     """
     if type(shape[0]) is tuple:
         shp = (shape[1][0], shape[0][0]) + shape[1][1:]
-        flat_shp = (shp[0], np.prd(shp[1:]))
+        flat_shp = (shp[0], np.prod(shp[1:]))
     else:
         shp = shape
         flat_shp = shape

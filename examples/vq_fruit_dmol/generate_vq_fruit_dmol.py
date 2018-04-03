@@ -62,8 +62,8 @@ for n, s in enumerate(fruit["data"]):
         train_data.append(n_s)
 
 cut = 256
-step = 1
-sample = True
+step = 256
+sample = False
 n_components = 10
 eval_batch_size = 500
 train_data = np.concatenate(train_data, axis=0)

@@ -569,8 +569,8 @@ def run_loop(sess,
     overall_valid_loss = []
     # won't match exactly due to this - even after replaying itr stateful args may change
     # however, should be *close* since data is at least iterated in the same way...
-    this_train_stateful_args = train_stateful_args
-    this_valid_stateful_args = valid_stateful_args
+    this_train_stateful_args = copy.deepcopy(train_stateful_args)
+    this_valid_stateful_args = copy.deepcopy(valid_stateful_args)
     last_status = time.time()
 
     model_saver = tf.train.Saver(max_to_keep=models_to_keep)
@@ -709,7 +709,8 @@ def run_loop(sess,
         results_dict["train_minibatch_time_auto"] = minibatch_train_time
         results_dict["train_cumulative_time_auto"] = cumulative_train_time
         results_dict["train_minibatch_count_auto"] = minibatch_train_count
-        if len(overall_valid_loss[0]) > 0:
+        # shortcut "and" to avoid edge case with no validation steps
+        if len(overall_valid_loss) > 0 and len(overall_valid_loss[0]) > 0:
             for i in range(len(overall_valid_loss)):
                 results_dict["valid_loss_{}".format(i)] = overall_valid_loss[i]
             results_dict["valid_minibatch_time_auto"] = minibatch_valid_time

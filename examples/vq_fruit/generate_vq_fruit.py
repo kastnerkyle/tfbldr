@@ -62,7 +62,7 @@ for n, s in enumerate(fruit["data"]):
 
 cut = 256
 # change to no overlap for now
-step = 16
+step = 256
 eval_batch_size = 500
 train_data = np.concatenate(train_data, axis=0)
 valid_data = np.concatenate(valid_data, axis=0)

@@ -40,6 +40,18 @@ import string
 
 logger = get_logger()
 
+def make_mask(arr):
+    mask = np.ones_like(arr[:, :, 0])
+    last_step = arr.shape[0] * arr[0, :, 0]
+    for mbi in range(arr.shape[1]):
+        for step in range(arr.shape[0]):
+            if arr[step:, mbi].min() == 0. and arr[step:, mbi].max() == 0.:
+                last_step[mbi] = step
+                mask[step:, mbi] = 0.
+                break
+    return mask
+
+
 # https://stackoverflow.com/questions/845058/how-to-get-line-count-cheaply-in-python
 def _make_gen(reader):
     b = reader(1024 * 1024)
@@ -63,7 +75,7 @@ class char_textfile_iterator(object):
                  seq_length,
                  number_of_lines_in_file=None,
                  one_hot_size=None, random_state=None):
-        """ if seq_length is None, split the file evenly into batch_size chunks,
+        """ split the file evenly into batch_size chunks,
             contiguous, truncating the last uneven part """
 
         self.textfile_path = textfile_path

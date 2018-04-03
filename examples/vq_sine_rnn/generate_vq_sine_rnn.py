@@ -22,7 +22,7 @@ if args.model_path == None:
 else:
     model_path = args.model_path
 
-sines = make_sinewaves(50, 40, square=True)
+sines = make_sinewaves(50, 40)
 train_sines = sines[:, ::2]
 train_sines = [train_sines[:, i] for i in range(train_sines.shape[1])]
 valid_sines = sines[:, 1::2]
@@ -30,14 +30,18 @@ valid_sines = [valid_sines[:, i] for i in range(valid_sines.shape[1])]
 
 random_state = np.random.RandomState(args.seed)
 
+"""
 config = tf.ConfigProto(
     device_count={'GPU': 0}
 )
+"""
 
 n_hid = 100
 batch_size = 10
+prime = 20
 
-with tf.Session(config=config) as sess:
+#with tf.Session(config=config) as sess:
+with tf.Session() as sess:
     saver = tf.train.import_meta_graph(model_path + '.meta')
     saver.restore(sess, model_path)
     fields = ["inputs",
@@ -62,7 +66,7 @@ with tf.Session(config=config) as sess:
     )
     x = np.array(valid_sines)
     x = x.transpose(1, 0, 2)
-    prev_x = 0. * x[:1, :batch_size] + 1.
+    prev_x_full = x[:prime, :batch_size]
     res = []
     q_res = []
     h_res = []
@@ -72,6 +76,8 @@ with tf.Session(config=config) as sess:
     init_q_h = np.zeros((batch_size, n_hid)).astype("float32")
     init_q_c = np.zeros((batch_size, n_hid)).astype("float32")
     for i in range(50):
+        if i < prime:
+            prev_x = prev_x_full[i][None]
         feed = {vs.inputs_tm1: prev_x[:1],
                 vs.init_hidden: init_h,
                 vs.init_cell: init_c,
@@ -79,6 +85,7 @@ with tf.Session(config=config) as sess:
                 vs.init_q_cell: init_q_c}
         outs = [vs.pred, vs.hiddens, vs.cells, vs.q_hiddens, vs.q_cells, vs.i_hiddens]
         r = sess.run(outs, feed_dict=feed)
+
         prev_x = r[0]
         hids = r[1]
         cs = r[2]
@@ -89,7 +96,10 @@ with tf.Session(config=config) as sess:
         init_c = cs[0]
         init_q_h = q_hids[0]
         init_q_c = q_cs[0]
-        res.append(prev_x)
+        if i < prime:
+            res.append(prev_x_full[i][None])
+        else:
+            res.append(prev_x)
         q_res.append(q_hids)
         h_res.append(hids)
         i_res.append(i_hids)
@@ -99,11 +109,14 @@ with tf.Session(config=config) as sess:
     f, axarr = plt.subplots(11, 1)
     for i in range(10):
         if i % 2 == 0:
-            axarr[i].plot(o[:, i // 2])
+            x = np.arange(len(o[:, i // 2]))
+            axarr[i].plot(x[:prime] + 1, o[:prime, i // 2], color="k")
+            axarr[i].plot(x[prime:], o[prime:, i // 2], color="steelblue")
         else:
-            axarr[i].plot(ind[:, i // 2])
+            axarr[i].plot(x[:prime] + 1, ind[:prime, i // 2], color="k")
+            axarr[i].plot(x[prime:], ind[prime:, i // 2], color="darkred")
 
-    axarr[-1].plot(valid_sines[0][:, 0], color="r")
+    axarr[-1].plot(valid_sines[0][1:, 0], color="forestgreen")
 
     plt.savefig("results")
     plt.close()

@@ -66,7 +66,7 @@ def _cuts(list_of_audio, cut, step):
     return real_final
 
 cut = 256
-step = 1
+step = 256
 train_audio = _cuts(train_data, cut, step)
 valid_audio = _cuts(valid_data, cut, step)
 
@@ -158,8 +158,6 @@ def create_decoder(latent, bn_flag):
                          border_mode=dbpad,
                          random_state=random_state)
     l5_mix, l5_means, l5_lin_scales = DiscreteMixtureOfLogistics([l5], [dmol_proj], n_components=n_components, name="d_out", random_state=random_state)
-    #s_l5 = Sigmoid(l5)
-    #t_l5 = Tanh(l5)
     return l5_mix, l5_means, l5_lin_scales
 
 
@@ -179,13 +177,8 @@ def create_graph():
         bn_flag = tf.placeholder_with_default(tf.zeros(shape=[]), shape=[])
         x_tilde_mix, x_tilde_means, x_tilde_lin_scales, z_e_x, z_q_x, z_i_x, z_nst_q_x, z_emb = create_vqvae(images, bn_flag)
         rec_loss = tf.reduce_mean(DiscreteMixtureOfLogisticsCost(x_tilde_mix, x_tilde_means, x_tilde_lin_scales, images, 256))
-        #rec_loss = tf.reduce_mean(BernoulliCrossEntropyCost(x_tilde, images))
-        #rec_loss = tf.reduce_mean(tf.square(x_tilde - images))
         vq_loss = tf.reduce_mean(tf.square(tf.stop_gradient(z_e_x) - z_nst_q_x))
         commit_loss = tf.reduce_mean(tf.square(z_e_x - tf.stop_gradient(z_nst_q_x)))
-        #rec_loss = tf.reduce_mean(tf.reduce_sum(BernoulliCrossEntropyCost(x_tilde, images), axis=[1, 2]))
-        #vq_loss = tf.reduce_mean(tf.reduce_sum(tf.square(tf.stop_gradient(z_e_x) - z_q_x), axis=[1, 2, 3]))
-        #commit_loss = tf.reduce_mean(tf.reduce_sum(tf.square(z_e_x - tf.stop_gradient(z_q_x)), axis=[1, 2, 3]))
         beta = 0.25
         loss = rec_loss + vq_loss + beta * commit_loss
         params = get_params_dict()
@@ -209,19 +202,7 @@ def create_graph():
                     "loss",
                     "rec_loss",
                     "train_step"]
-    things_tf = [images,
-                 bn_flag,
-                 x_tilde_mix,
-                 x_tilde_means,
-                 x_tilde_lin_scales,
-                 z_e_x,
-                 z_q_x,
-                 z_i_x,
-                 z_emb,
-                 loss,
-                 rec_loss,
-                 train_step]
-    assert len(things_names) == len(things_tf)
+    things_tf = [eval(name) for name in things_names]
     for tn, tt in zip(things_names, things_tf):
         graph.add_to_collection(tn, tt)
     train_model = namedtuple('Model', things_names)(*things_tf)
@@ -251,6 +232,6 @@ with tf.Session(graph=g) as sess:
     run_loop(sess,
              loop, train_itr,
              loop, valid_itr,
-             n_steps=150000,
-             n_train_steps_per=10000,
+             n_steps=50000,
+             n_train_steps_per=5000,
              n_valid_steps_per=250)

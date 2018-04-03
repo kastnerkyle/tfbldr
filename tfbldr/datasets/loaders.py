@@ -107,18 +107,6 @@ def pe(cmd, shell=False, verbose=True):
     return all_lines
 
 
-def make_mask(arr):
-    mask = np.ones_like(arr[:, :, 0])
-    last_step = arr.shape[0] * arr[0, :, 0]
-    for mbi in range(arr.shape[1]):
-        for step in range(arr.shape[0]):
-            if arr[step:, mbi].min() == 0. and arr[step:, mbi].max() == 0.:
-                last_step[mbi] = step
-                mask[step:, mbi] = 0.
-                break
-    return mask
-
-
 # https://mrcoles.com/blog/3-decorator-examples-and-awesome-python/
 def rsync_fetch(fetch_func, machine_to_fetch_from, *args, **kwargs):
     """

@@ -60,7 +60,7 @@ def _cuts(list_of_audio, cut, step):
     return real_final
 
 cut = 256
-step = 16
+step = 256
 train_audio = _cuts(train_data, cut, step)
 valid_audio = _cuts(valid_data, cut, step)
 

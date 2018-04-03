@@ -3,6 +3,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from tfbldr.nodes import Linear
+from tfbldr.nodes import ReLU
 from tfbldr.nodes import LSTMCell
 from tfbldr.nodes import VqEmbedding
 from tfbldr.datasets import list_iterator
@@ -16,6 +17,7 @@ import numpy as np
 from collections import namedtuple, defaultdict
 
 sines = make_sinewaves(50, 40, square=True)
+#sines = make_sinewaves(50, 40, harmonic=True)
 #sines = make_sinewaves(50, 40)
 train_sines = sines[:, ::2]
 train_sines = [train_sines[:, i] for i in range(train_sines.shape[1])]
@@ -46,7 +48,7 @@ forward_init = "truncated_normal"
 
 def create_model(inp_tm1, inp_t, h1_init, c1_init, h1_q_init, c1_q_init):
     def step(x_t, h1_tm1, c1_tm1, h1_q_tm1, c1_q_tm1):
-        output, s = LSTMCell([x_t], [1], h1_tm1, c1_tm1, n_hid,
+        output, s = LSTMCell([x_t, h1_q_tm1], [1, n_hid], h1_tm1, c1_tm1, n_hid,
                              random_state=random_state,
                              name="rnn1", init=rnn_init)
         h1_t = s[0]
@@ -62,11 +64,28 @@ def create_model(inp_tm1, inp_t, h1_init, c1_init, h1_q_init, c1_q_init):
                                                          random_state=random_state,
                                                          name="h1_vq_emb")
 
+        output_q_t, output_i_t, output_nst_q_t, output_emb = VqEmbedding(output, n_hid, 512,
+                                                                         random_state=random_state,
+                                                                         name="out_vq_emb")
+
         # not great
         h1_i_t = tf.cast(h1_i_t, tf.float32)
-        return output, h1_t, c1_t, h1_q_t, c1_q_t, h1_nst_q_t, h1_cq_t, h1_i_t
+        output_i_t = tf.cast(h1_i_t, tf.float32)
+        # r[0]
+        rets = [output_q_t]
+        # r[1:3]
+        rets += [h1_t, c1_t]
+        # r[3:9]
+        rets += [h1_q_t, c1_q_t, h1_nst_q_t, h1_cq_t, h1_i_t, h1_emb]
+        # r[9:]
+        rets += [output_q_t, output_nst_q_t, output, output_i_t, output_emb]
+        return rets
 
-    r = scan(step, [inp_tm1], [None, h1_init, c1_init, h1_q_init, c1_q_init, None, None, None])
+    outputs_info = [None,
+                    h1_init, c1_init,
+                    h1_q_init, c1_q_init, None, None, None, None,
+                    None, None, None, None, None]
+    r = scan(step, [inp_tm1], outputs_info)
     out = r[0]
     hiddens = r[1]
     cells = r[2]
@@ -75,10 +94,36 @@ def create_model(inp_tm1, inp_t, h1_init, c1_init, h1_q_init, c1_q_init):
     q_nst_hiddens = r[5]
     q_nvq_hiddens  = r[6]
     i_hiddens = r[7]
+    emb_hiddens = r[8]
+    # out == q_out
+    q_out = r[9]
+    q_nst_out = r[10]
+    q_nvq_out = r[11]
+    i_out = r[12]
+    emb_out = r[13]
 
-    pred = Linear([out], [n_hid], 1, random_state=random_state, name="out",
+    l1 = Linear([out], [n_hid], n_hid, random_state=random_state, name="l1",
+                init=forward_init)
+    r_l1 = ReLU(l1)
+    pred = Linear([r_l1], [n_hid], 1, random_state=random_state, name="out",
                   init=forward_init)
-    return pred, hiddens, cells, q_hiddens, q_cells, q_nst_hiddens, q_nvq_hiddens, i_hiddens
+    outs_names = ["pred",
+                  "hiddens",
+                  "cells",
+                  "q_hiddens",
+                  "q_cells",
+                  "q_nst_hiddens",
+                  "q_nvq_hiddens",
+                  "i_hiddens",
+                  "emb_hiddens",
+                  "q_out",
+                  "q_nst_out",
+                  "q_nvq_out",
+                  "i_out",
+                  "emb_out"]
+    outs_tf = [eval(name) for name in outs_names]
+    c = namedtuple("Core", outs_names)(*outs_tf)
+    return c
 
 def create_graph():
     graph = tf.Graph()
@@ -91,22 +136,31 @@ def create_graph():
         init_q_hidden = tf.placeholder(tf.float32, shape=[batch_size, n_hid])
         init_q_cell = tf.placeholder(tf.float32, shape=[batch_size, n_hid])
         r = create_model(inputs_tm1, inputs_t, init_hidden, init_cell, init_q_hidden, init_q_cell)
-        pred, hiddens, cells, q_hiddens, q_cells, q_nst_hiddens, q_nvq_hiddens, i_hiddens = r
-        rec_loss = tf.reduce_mean(tf.square(pred - inputs_t))
 
+        # reconstruction loss
+        rec_loss = tf.reduce_mean(tf.square(r.pred - inputs_t))
+
+        # h2h embedding losses
         alpha = 1.
         beta = 0.25
-        vq_h_loss = tf.reduce_mean(tf.square(tf.stop_gradient(q_nvq_hiddens) - q_nst_hiddens))
-        commit_h_loss = tf.reduce_mean(tf.square(q_nvq_hiddens - tf.stop_gradient(q_nst_hiddens)))
+        vq_h_loss = tf.reduce_mean(tf.square(tf.stop_gradient(r.q_nvq_hiddens) - r.q_nst_hiddens))
+        commit_h_loss = tf.reduce_mean(tf.square(r.q_nvq_hiddens - tf.stop_gradient(r.q_nst_hiddens)))
 
-        loss = rec_loss + alpha * vq_h_loss + beta * commit_h_loss
+        # output embedding losses
+        vq_o_loss = tf.reduce_mean(tf.square(tf.stop_gradient(r.q_nvq_out) - r.q_nst_out))
+        commit_o_loss = tf.reduce_mean(tf.square(r.q_nvq_out - tf.stop_gradient(r.q_nst_out)))
+
+        loss_r = rec_loss
+        loss_h = alpha * vq_h_loss + beta * commit_h_loss
+        loss_o = alpha * vq_o_loss + beta * commit_o_loss
+        loss = loss_r + loss_h + loss_o
 
         params = get_params_dict()
         grads = tf.gradients(loss, params.values())
-        learning_rate = 0.0001
+        learning_rate = 0.001
         optimizer = tf.train.AdamOptimizer(learning_rate, use_locking=True)
         assert len(grads) == len(params)
-        grads = [tf.clip_by_value(g, -10., 10.) if g is not None else None for g in grads]
+        grads = [tf.clip_by_value(g, -1., 1.) if g is not None else None for g in grads]
         j = [(g, p) for g, p in zip(grads, params.values())]
         train_step = optimizer.apply_gradients(j)
 
@@ -117,37 +171,15 @@ def create_graph():
                     "init_cell",
                     "init_q_hidden",
                     "init_q_cell",
-                    "hiddens",
-                    "cells",
-                    "q_hiddens",
-                    "q_cells",
-                    "q_nvq_hiddens",
-                    "i_hiddens",
-                    "pred",
                     "loss",
                     "rec_loss",
                     "train_step"]
-    things_tf = [inputs,
-                 inputs_tm1,
-                 inputs_t,
-                 init_hidden,
-                 init_cell,
-                 init_q_hidden,
-                 init_q_cell,
-                 hiddens,
-                 cells,
-                 q_hiddens,
-                 q_cells,
-                 q_nvq_hiddens,
-                 i_hiddens,
-                 pred,
-                 loss,
-                 rec_loss,
-                 train_step]
-    assert len(things_names) == len(things_tf)
+    things_tf = [eval(name) for name in things_names]
+    things_names += r._asdict().keys()
+    things_tf += r._asdict().values()
+    train_model = namedtuple('Model', things_names)(*things_tf)
     for tn, tt in zip(things_names, things_tf):
         graph.add_to_collection(tn, tt)
-    train_model = namedtuple('Model', things_names)(*things_tf)
     return graph, train_model
 
 g, vs = create_graph()

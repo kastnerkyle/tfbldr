@@ -21,13 +21,9 @@ direct_model = args.direct_model[0]
 
 random_state = np.random.RandomState(args.seed)
 
-config = tf.ConfigProto(
-    device_count={'GPU': 0}
-)
-
-batch_size = 20
-seq_length = 50
-n_hid = 2048
+batch_size = 128
+seq_length = 100
+n_hid = 1000
 n_emb = 512
 valid_random_state = np.random.RandomState(7)
 # just to get char lookup
@@ -39,7 +35,7 @@ n_rounds = 3
 
 sample_random_state = np.random.RandomState(1165)
 
-with tf.Session(config=config) as sess:
+with tf.Session() as sess:
     saver = tf.train.import_meta_graph(direct_model + '.meta')
     saver.restore(sess, direct_model)
     fields = ['inputs_tm1',
@@ -112,30 +108,20 @@ with tf.Session(config=config) as sess:
     # evaluate test set perplexity
     with open("ptb_data/ptb.test.txt", "rb") as f:
         lines = f.readlines()
+    lines = sorted(lines, key=len, reverse=True)
 
-    lines = lines[:35]
-
-    # do it the simple way
+    # do it the simple slow way
     tot = []
     ii = 0
     all_char_probs = []
     while True:
-        current_indices = (ii * batch_size + np.arange(0, batch_size)).astype("int32")
-        if current_indices[0] >= len(lines):
+        if ii == len(lines):
             break
-        print("Processing lines {}:{} of total {}".format(current_indices[0] + 1, current_indices[-1] + 1, len(lines)))
-        # start over on every line
-        # lines always start with " "
-        # so that is basically the SOS symbol
-        these_lines = [lines[i] for i in current_indices if i in range(len(lines))]
-        maxlen = max([len(line) for line in these_lines])
-        x = np.zeros((maxlen, batch_size, 1)) - 1
-        for bi in range(len(these_lines)):
-            for li in range(len(these_lines[bi])):
-                x[li, bi] = valid_itr.char2ind[these_lines[bi][li]]
-        mask = (x >= 0).astype("int32")
-        x = mask * x
-        print("Minibatch shape {}".format(x.shape))
+        print("Processing line {} of {}".format(ii + 1, len(lines)))
+        line = lines[ii]
+        x = np.zeros((len(line), batch_size, 1))
+        for li in range(len(line)):
+            x[li, 0] = valid_itr.char2ind[line[li]]
 
         x_tm1 = x[:-1]
         x_t = x[1:]
@@ -151,18 +137,22 @@ with tf.Session(config=config) as sess:
                 vs.init_cell: init_c,
                 vs.init_q_hidden: init_q_h,
                 vs.init_q_cell: init_q_c}
-        outs = [vs.per_step_rec_loss, vs.pred_sm, vs.i_hiddens]
+        outs = [vs.per_step_rec_loss, vs.pred_sm,
+                vs.hiddens, vs.cells, vs.q_hiddens, vs.q_cells, vs.i_hiddens]
         r = sess.run(outs, feed_dict=feed)
         l = r[0]
         sm = r[1]
-        masked_l = mask[1:, :, 0] * l
-        char_probs = []
-        for bi in range(len(these_lines)):
-            x_t_ind = x_t[np.arange(len(these_lines[bi]) - 1), bi].flatten().astype("int32")
-            cpr = sm[np.arange(len(these_lines[bi]) - 1), [bi] * (len(these_lines[bi]) - 1), x_t_ind]
-            char_probs.append(cpr)
-        all_char_probs += char_probs
-        i_hids = r[2]
+        hiddens = r[2]
+        cells = r[3]
+        q_hiddens = r[4]
+        q_cells = r[5]
+        init_h = hiddens[-1]
+        init_c = cells[-1]
+        init_q_h = q_hiddens[-1]
+        init_q_c = q_cells[-1]
+        x_t_ind = x_t[:, 0, 0].astype("int32")
+        cpr = sm[np.arange(len(x) - 1), 0, x_t_ind]
+        all_char_probs += [cpr]
         ii += 1
     # http://ofir.io/Neural-Language-Modeling-From-Scratch/
     # this isn't right...
@@ -175,4 +165,5 @@ with tf.Session(config=config) as sess:
     sumlog2sum = np.sum([a[0] for a in log2sum_and_len])
     sumlen = np.sum([a[1] for a in log2sum_and_len])
     bpc = -sumlog2sum / sumlen
+    print("BPC: {}".format(bpc))
     from IPython import embed; embed(); raise ValueError()
