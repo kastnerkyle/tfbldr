@@ -8,9 +8,11 @@ from .nodes import Conv2d
 from .nodes import ConvTranspose2d
 from .nodes import BatchNorm2d
 from .nodes import Embedding
+from .nodes import Bilinear
 from .nodes import VqEmbedding
 from .nodes import SimpleRNNCell
 from .nodes import LSTMCell
+from .nodes import GRUCell
 from .nodes import GaussianAttentionCell
 from .nodes import DiscreteMixtureOfLogistics
 from .nodes import DiscreteMixtureOfLogisticsCost

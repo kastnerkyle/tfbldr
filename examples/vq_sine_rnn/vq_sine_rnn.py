@@ -3,6 +3,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from tfbldr.nodes import Linear
+from tfbldr.nodes import Bilinear
 from tfbldr.nodes import ReLU
 from tfbldr.nodes import LSTMCell
 from tfbldr.nodes import VqEmbedding
@@ -16,8 +17,8 @@ import tensorflow as tf
 import numpy as np
 from collections import namedtuple, defaultdict
 
-sines = make_sinewaves(50, 40, square=True)
 #sines = make_sinewaves(50, 40, harmonic=True)
+sines = make_sinewaves(50, 40, square=True)
 #sines = make_sinewaves(50, 40)
 train_sines = sines[:, ::2]
 train_sines = [train_sines[:, i] for i in range(train_sines.shape[1])]
@@ -37,18 +38,21 @@ plt.savefig("tmp")
 train_itr_random_state = np.random.RandomState(1122)
 valid_itr_random_state = np.random.RandomState(12)
 batch_size = 10
-train_itr = list_iterator([train_sines], 10, random_state=train_itr_random_state)
-valid_itr = list_iterator([valid_sines], 10, random_state=valid_itr_random_state)
+train_itr = list_iterator([train_sines], batch_size, random_state=train_itr_random_state)
+valid_itr = list_iterator([valid_sines], batch_size, random_state=valid_itr_random_state)
 
 random_state = np.random.RandomState(1999)
 
 n_hid = 100
-rnn_init = "truncated_normal"
-forward_init = "truncated_normal"
+n_emb = 512
+rnn_init = None#"truncated_normal"
+forward_init = None#"truncated_normal"
 
 def create_model(inp_tm1, inp_t, h1_init, c1_init, h1_q_init, c1_q_init):
+    p_tm1 = Linear([inp_tm1], [1], n_hid, random_state=random_state, name="proj_in",
+                   init=forward_init)
     def step(x_t, h1_tm1, c1_tm1, h1_q_tm1, c1_q_tm1):
-        output, s = LSTMCell([x_t, h1_q_tm1], [1, n_hid], h1_tm1, c1_tm1, n_hid,
+        output, s = LSTMCell([x_t, h1_q_tm1], [n_hid, n_hid], h1_tm1, c1_tm1, n_hid,
                              random_state=random_state,
                              name="rnn1", init=rnn_init)
         h1_t = s[0]
@@ -60,19 +64,30 @@ def create_model(inp_tm1, inp_t, h1_init, c1_init, h1_q_init, c1_q_init):
         h1_cq_t = s[0]
         c1_q_t = s[1]
 
-        h1_q_t, h1_i_t, h1_nst_q_t, h1_emb = VqEmbedding(h1_cq_t, n_hid, 512,
+        h1_q_t, h1_i_t, h1_nst_q_t, h1_emb = VqEmbedding(h1_cq_t, n_hid, n_emb,
                                                          random_state=random_state,
                                                          name="h1_vq_emb")
 
-        output_q_t, output_i_t, output_nst_q_t, output_emb = VqEmbedding(output, n_hid, 512,
+        output_q_t, output_i_t, output_nst_q_t, output_emb = VqEmbedding(output, n_hid, n_emb,
                                                                          random_state=random_state,
                                                                          name="out_vq_emb")
 
         # not great
         h1_i_t = tf.cast(h1_i_t, tf.float32)
         output_i_t = tf.cast(h1_i_t, tf.float32)
+
+        lf_output = Bilinear(h1_q_t, n_hid, output_emb, n_hid,
+                             random_state=random_state, name="out_mix",
+                             init=forward_init)
+        rf_output = Bilinear(output_q_t, n_hid, h1_emb, n_hid,
+                             random_state=random_state, name="h_mix",
+                             init=forward_init)
+        f_output = Linear([lf_output, rf_output], [n_emb, n_emb], n_hid,
+                          random_state=random_state, name="out_f",
+                          init=forward_init)
+
         # r[0]
-        rets = [output_q_t]
+        rets = [f_output]
         # r[1:3]
         rets += [h1_t, c1_t]
         # r[3:9]
@@ -85,7 +100,7 @@ def create_model(inp_tm1, inp_t, h1_init, c1_init, h1_q_init, c1_q_init):
                     h1_init, c1_init,
                     h1_q_init, c1_q_init, None, None, None, None,
                     None, None, None, None, None]
-    r = scan(step, [inp_tm1], outputs_info)
+    r = scan(step, [p_tm1], outputs_info)
     out = r[0]
     hiddens = r[1]
     cells = r[2]
@@ -95,14 +110,13 @@ def create_model(inp_tm1, inp_t, h1_init, c1_init, h1_q_init, c1_q_init):
     q_nvq_hiddens  = r[6]
     i_hiddens = r[7]
     emb_hiddens = r[8]
-    # out == q_out
     q_out = r[9]
     q_nst_out = r[10]
     q_nvq_out = r[11]
     i_out = r[12]
     emb_out = r[13]
 
-    l1 = Linear([out], [n_hid], n_hid, random_state=random_state, name="l1",
+    l1 = Linear([out, q_hiddens], [n_hid, n_hid], n_hid, random_state=random_state, name="l1",
                 init=forward_init)
     r_l1 = ReLU(l1)
     pred = Linear([r_l1], [n_hid], 1, random_state=random_state, name="out",
@@ -217,6 +231,6 @@ with tf.Session(graph=g) as sess:
     run_loop(sess,
              loop, train_itr,
              loop, valid_itr,
-             n_steps=20000,
-             n_train_steps_per=5000,
+             n_steps=10000,
+             n_train_steps_per=1000,
              n_valid_steps_per=100)

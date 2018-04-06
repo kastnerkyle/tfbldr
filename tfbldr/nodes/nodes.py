@@ -479,6 +479,43 @@ def Embedding(indices, n_symbols, output_dim, random_state=None,
     return lu, vectors
 
 
+def Bilinear(left_input, left_dim, right_input, right_dim, random_state=None,
+             init=None, scale=1.,
+             strict=None, name=None):
+
+    if name is None:
+        name = _get_name()
+
+    if random_state is None:
+        raise ValueError("Must pass random_state argument to Embedding")
+
+    name_w = name + "_bilinear_w"
+    name_out = name + "_bilinear_out"
+
+    if strict is None:
+        strict = get_strict_mode_default()
+
+    if strict:
+        cur_defs = get_params_dict()
+        if name_w in cur_defs:
+            raise ValueError("Name {} already created in params dict!".format(name_w))
+
+    try:
+        mixer = _get_shared(name_w)
+    except NameError:
+        mixer_weight, = make_numpy_weights(left_dim, [right_dim],
+                                           random_state, init=init,
+                                           scale=scale, name=name_w)
+        mixer = tf.Variable(mixer_weight, trainable=True)
+        _set_shared(name_w, mixer)
+
+    lp = dot(left_input, mixer)
+    if len(_shape(right_input)) == 2:
+        out = dot(lp, tf.transpose(right_input, (1, 0)))
+    out = tf.identity(out, name=name_out)
+    return out
+
+
 def Linear(list_of_inputs, list_of_input_dims, output_dim, random_state=None,
            name=None, init=None, scale="default", biases=True, bias_offset=0.,
            strict=None):
@@ -835,6 +872,103 @@ def _dropout(tensor, keep_threshold, seed):
     sample = tf.where(tf.random_uniform([], minval=0., maxval=1., seed=seed) < keep_threshold,
                       tf.ones([]), tf.zeros([]))
     return sample * tensor
+
+
+def GRUCell(list_of_inputs, list_of_input_dims,
+            previous_hidden,
+            num_units,
+            output_dim=None,
+            input_mask=None,
+            random_state=None,
+            name=None, init=None, scale="default",
+            forget_bias=1.,
+            cell_dropout=None,
+            strict=None):
+    if cell_dropout is not None:
+        raise ValueError("NYI")
+    # cell_dropout should be a value in [0., 1.], or None
+    # output is the thing to use in following layers, state is a tuple that feeds into the next call
+    if random_state is None:
+        raise ValueError("Must pass random_state")
+
+    if name is None:
+        name = _get_name()
+
+    input_dim = sum(list_of_input_dims)
+    hidden_dim = 3 * num_units
+
+    if init is None:
+        inp_init = None
+        h_init = None
+        out_init = None
+    elif init == "truncated_normal":
+        inp_init = "truncated_normal"
+        h_init = "truncated_normal"
+        out_init = "truncated_normal"
+    elif init == "glorot_uniform":
+        inp_init = "glorot_uniform"
+        h_init = "glorot_uniform"
+        out_init = "glorot_uniform"
+    elif init == "normal":
+        inp_init = "normal"
+        h_init = "normal"
+        out_init = "normal"
+    else:
+        raise ValueError("Unknown init argument {}".format(init))
+
+    name_gate_w = name + "_gru_gate_proj"
+    gate_w_np, = make_numpy_weights(input_dim + num_units, [2 * num_units],
+                                    random_state=random_state,
+                                    init=inp_init, name=name_gate_w)
+    gate_b_np, = make_numpy_biases([2 * num_units])
+    # Cho's code used 0. bias ?
+    gate_b_np = gate_b_np + 1.
+
+    #logger.info("LSTMCell {} input to hidden initialized using init {}".format(name, inp_init))
+    #logger.info("LSTMCell {} hidden to hidden initialized using init {}".format(name, h_init))
+    gru_gate_proj = Linear(list_of_inputs + [previous_hidden], list_of_input_dims + [num_units],
+                           2 * num_units,
+                           random_state=random_state,
+                           name=name_gate_w,
+                           init=(gate_w_np, gate_b_np), strict=strict)
+    gru_gate = Sigmoid(gru_gate_proj)
+    r, u = tf.split(gru_gate, 2, axis=1)
+
+    state = previous_hidden
+    r_state = r * state
+
+    name_proj_w = name + "_gru_proj"
+    proj_w_np, = make_numpy_weights(input_dim + num_units, [num_units],
+                                    random_state=random_state,
+                                    init=inp_init, name=name_proj_w)
+    proj_b_np, = make_numpy_biases([num_units])
+
+    gru_proj = Linear(list_of_inputs + [previous_hidden], list_of_input_dims + [num_units],
+                      num_units,
+                      random_state=random_state,
+                      name=name_proj_w,
+                      init=(proj_w_np, proj_b_np), strict=strict)
+
+    _h = Tanh(gru_proj)
+    h = u * state + (1. - u) * _h
+    if input_mask is not None:
+        h = input_mask[:, None] * h + (1. - input_mask[:, None]) * h
+
+    if output_dim is not None:
+        raise ValueError("NYI")
+        name_out = name + "_lstm_h_to_out",
+        h_to_out_w_np, = make_numpy_weights(num_units, [output_dim],
+                                            random_state=random_state,
+                                            init=out_init, name=name_out)
+        h_to_out_b_np, = make_numpy_biases([output_dim])
+        h_to_out = Linear([h], [num_units], output_dim, random_state=random_state,
+                          name=name_out,
+                          init=(h_to_out_w_np, h_to_out_b_np), strict=strict)
+        final_out = h_to_out
+        #logger.info("LSTMCell {} hidden to output initialized using init {}".format(name, out_init))
+    else:
+        final_out = h
+    return final_out, (h,)
 
 
 def LSTMCell(list_of_inputs, list_of_input_dims,

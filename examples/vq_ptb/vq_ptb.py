@@ -33,7 +33,7 @@ n_emb = 512
 n_inputs = len(train_itr.char2ind)
 rnn_init = None
 forward_init = None
-cell_dropout_scale = 0.6
+cell_dropout_scale = 0.75
 
 def create_model(inp_tm1, inp_t, cell_dropout, h1_init, c1_init, h1_q_init, c1_q_init):
     e_tm1, emb_r = Embedding(inp_tm1, n_inputs, in_emb, random_state=random_state, name="in_emb")
@@ -82,7 +82,7 @@ def create_graph():
         inputs = tf.placeholder(tf.float32, shape=[None, batch_size, 1])
         inputs_tm1 = inputs[:-1]
         inputs_t = inputs[1:]
-        cell_dropout = tf.placeholder_with_default(cell_dropout_scale * tf.ones(shape=[]), shape=[])
+        cell_dropout = tf.placeholder_with_default(1. * tf.ones(shape=[]), shape=[])
         init_hidden = tf.placeholder(tf.float32, shape=[batch_size, n_hid])
         init_cell = tf.placeholder(tf.float32, shape=[batch_size, n_hid])
         init_q_hidden = tf.placeholder(tf.float32, shape=[batch_size, n_hid])
@@ -159,7 +159,8 @@ def loop(sess, itr, extras, stateful_args):
                 vs.init_hidden: init_h,
                 vs.init_cell: init_c,
                 vs.init_q_hidden: init_q_h,
-                vs.init_q_cell: init_q_c}
+                vs.init_q_cell: init_q_c,
+                vs.cell_dropout: cell_dropout_scale}
         outs = [vs.rec_loss, vs.loss, vs.train_step, vs.hiddens, vs.cells, vs.q_hiddens, vs.q_cells]
         r = sess.run(outs, feed_dict=feed)
         l = r[0]
@@ -174,7 +175,8 @@ def loop(sess, itr, extras, stateful_args):
                 vs.init_hidden: init_h,
                 vs.init_cell: init_c,
                 vs.init_q_hidden: init_q_h,
-                vs.init_q_cell: init_q_c}
+                vs.init_q_cell: init_q_c,
+                vs.cell_dropout: 1.}
         outs = [vs.rec_loss, vs.hiddens, vs.cells, vs.q_hiddens, vs.q_cells]
         r = sess.run(outs, feed_dict=feed)
         l = r[0]
