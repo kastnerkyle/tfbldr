@@ -5,6 +5,7 @@ from .nodes import Sigmoid
 from .nodes import OneHot
 from .nodes import Softmax
 from .nodes import Conv2d
+from .nodes import GatedMaskedConv2d
 from .nodes import ConvTranspose2d
 from .nodes import BatchNorm2d
 from .nodes import Embedding

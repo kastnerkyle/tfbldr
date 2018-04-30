@@ -275,7 +275,8 @@ def np_ortho(shape, random_state, scale=1.):
     return (scale * res).astype("float32")
 
 
-def make_numpy_biases(bias_dims):
+def make_numpy_biases(bias_dims, name=""):
+    logger.info("Initializing {} with {} init".format(name, "zero"))
     return [np_zeros((dim,)) for dim in bias_dims]
 
 
@@ -472,7 +473,6 @@ def Embedding(indices, n_symbols, output_dim, random_state=None,
     lu = tf.nn.embedding_lookup(vectors, ii)
     if nd == 3:
         lu = lu[:, :, 0]
-    elif nd == 2:
         lu = lu[:, 0]
     else:
         raise ValueError("Input dimension not handled, Embedding input shape {} results in shape {}".format(shp, shape(lu)))
@@ -563,7 +563,7 @@ def Linear(list_of_inputs, list_of_input_dims, output_dim, random_state=None,
 
     if biases:
         if (init is None) or (type(init) is str):
-            b, = make_numpy_biases([output_dim])
+            b, = make_numpy_biases([output_dim], name=name_b)
         else:
             b = init[1]
         b = b + bias_offset
@@ -582,9 +582,11 @@ def Conv2d(list_of_inputs, list_of_input_dims, num_feature_maps,
            dilation=[1, 1, 1, 1],
            strides=[1, 1, 1, 1],
            border_mode="same",
+           custom_weight_mask=None,
            init=None, scale="default",
            biases=True, bias_offset=0.,
            name=None, random_state=None, strict=None):
+    # kernel is H, W
     if name is None:
         name = _get_name()
 
@@ -609,9 +611,12 @@ def Conv2d(list_of_inputs, list_of_input_dims, num_feature_maps,
     input_height = _shape(input_t)[1]
     input_width = _shape(input_t)[2]
 
-    name_w = name + "_conv2d_w"
-    name_b = name + "_conv2d_b"
-    name_out = name + "_conv2d_out"
+    if type(name) is str:
+        name_w = name + "_conv2d_w"
+        name_b = name + "_conv2d_b"
+        name_out = name + "_conv2d_out"
+        name_mask = name + "_conv2d_mask"
+
     if strict is None:
         strict = get_strict_mode_default()
 
@@ -623,17 +628,30 @@ def Conv2d(list_of_inputs, list_of_input_dims, num_feature_maps,
         if name_b in cur_defs:
             raise ValueError("Name {} already created in params dict!".format(name_b))
 
-    weight_values, = make_numpy_weights((input_channels, input_width, input_height),
-                                        [(num_feature_maps, kernel_size[0], kernel_size[1])],
-                                        init=init,
-                                        scale=scale,
-                                        random_state=random_state, name=name_w)
+    if init is None or type(init) is str:
+        weight_values, = make_numpy_weights((input_channels, input_width, input_height),
+                                            [(num_feature_maps, kernel_size[0], kernel_size[1])],
+                                            init=init,
+                                            scale=scale,
+                                            random_state=random_state, name=name_w)
+    else:
+        weight_values = init[0]
+        name_w = name[0]
+
     try:
         weight = _get_shared(name_w)
     except NameError:
         #logger.info("Conv2d layer {} initialized using init {}".format(name, init))
         weight = tf.Variable(weight_values, trainable=True, name=name_w)
         _set_shared(name_w, weight)
+
+    if custom_weight_mask is not None:
+        try:
+            mask = _get_shared(name_mask)
+        except NameError:
+            mask = tf.Variable(custom_weight_mask, trainable=False, name=name_mask)
+            _set_shared(name_mask, mask)
+        weight = mask * weight
 
     if border_mode == "same":
         pad = "SAME"
@@ -643,27 +661,43 @@ def Conv2d(list_of_inputs, list_of_input_dims, num_feature_maps,
         try:
             int(border_mode)
             new_pad = [0, int(border_mode), int(border_mode), 0]
+            input_t = tf.pad(input_t, [[new_pad[0]] * 2,
+                                       [new_pad[1]] * 2,
+                                       [new_pad[2]] * 2,
+                                       [new_pad[3]] * 2], "CONSTANT")
         except:
             try:
                 # assume it is a custom list border pad
                 # https://stackoverflow.com/questions/37659538/custom-padding-for-convolutions-in-tensorflow
                 new_pad = [int(bi) for bi in border_mode]
+                input_t = tf.pad(input_t, [[new_pad[0]] * 2,
+                                           [new_pad[1]] * 2,
+                                           [new_pad[2]] * 2,
+                                           [new_pad[3]] * 2], "CONSTANT")
             except:
-                raise ValueError("Unknown border_mode {} specified".format(border_mode))
-
-        assert len(new_pad) == 4
-        input_t = tf.pad(input_t, [[new_pad[0]] * 2,
-                                   [new_pad[1]] * 2,
-                                   [new_pad[2]] * 2,
-                                   [new_pad[3]] * 2], "CONSTANT")
+                try:
+                    # custom padded border mode
+                    len(border_mode[0])
+                    new_pad = border_mode
+                    assert len(new_pad) == 4
+                    for np in new_pad:
+                        assert len(np) == 2
+                    input_t = tf.pad(input_t, [[new_pad[0][0], new_pad[0][1]],
+                                               [new_pad[1][0], new_pad[1][1]],
+                                               [new_pad[2][0], new_pad[2][1]],
+                                               [new_pad[3][0], new_pad[3][1]]], "CONSTANT")
+                except:
+                    raise ValueError("Unknown border_mode {} specified".format(border_mode))
         pad = "VALID"
 
     out = tf.nn.conv2d(input_t, weight, strides, padding=pad)
     if biases:
         if (init is None) or (type(init) is str):
-            b, = make_numpy_biases([num_feature_maps])
+            b, = make_numpy_biases([num_feature_maps], name=name_b)
         else:
             b = init[1]
+            name_b = name[1]
+            name_out = name[2]
         b = b + bias_offset
         try:
             biases = _get_shared(name_b)
@@ -673,6 +707,144 @@ def Conv2d(list_of_inputs, list_of_input_dims, num_feature_maps,
         out = out + biases[None, None, None]
     out = tf.identity(out, name=name_out)
     return out
+
+
+def GatedMaskedConv2d(list_of_v_inputs, list_of_v_input_dims,
+                      list_of_h_inputs, list_of_h_input_dims,
+                      num_feature_maps,
+                      residual=True,
+                      kernel_size=(3, 3),
+                      dilation=[1, 1, 1, 1],
+                      strides=[1, 1, 1, 1],
+                      mask_type="img_B",
+                      border_mode="same",
+                      init=None, scale="default",
+                      biases=True, bias_offset=0.,
+                      name=None, random_state=None, strict=None):
+    # Special thanks to Rithesh Kumar for example code
+    # https://github.com/ritheshkumar95/pytorch-vqvae/blob/master/modules.py#L136
+    # do it with nonsquare conv
+    # kernel is H, W
+    if random_state is None:
+        raise ValueError("Must pass instance of np.random.RandomState!")
+
+    if name is None:
+        name = _get_name()
+
+    if kernel_size[0] != kernel_size[1] or kernel_size[0] % 2 != 1:
+        raise ValueError("Kernel size must be odd, and square e.g. (3, 3)")
+
+    name_vert = name + "_gated_masked_vert"
+    name_horiz = name + "_gated_masked_horiz"
+    name_vert2horiz = name + "_gated_masked_vert2horiz"
+    name_horiz_res = name + "_gated_masked_conv2d_horiz_res"
+    name_m_v = name + "_gated_masked_conv2d_mask_vert"
+    name_m_h = name + "_gated_masked_conv2d_mask_horiz"
+
+    if strict is None:
+        strict = get_strict_mode_default()
+
+    if strict:
+        cur_defs = get_params_dict()
+        if name_m_v in cur_defs:
+            raise ValueError("Name {} already created in params dict!".format(name_m_v))
+
+        if name_m_h in cur_defs:
+            raise ValueError("Name {} already created in params dict!".format(name_m_h))
+
+    input_t = tf.concat(list_of_v_inputs, axis=-1)
+    input_channels = sum(list_of_v_input_dims)
+    input_height = _shape(input_t)[1]
+    input_width = _shape(input_t)[2]
+    output_channels = num_feature_maps
+
+    # left pad by the exact correct amount
+    vert_kernel = (kernel_size[0] // 2 + 1, kernel_size[1])
+    bpad_v = ((0, 0), (kernel_size[0] // 2, 0), (kernel_size[1] // 2, kernel_size[1] // 2), (0, 0))
+    mask_v = np.ones((kernel_size[0] // 2 + 1, kernel_size[1], input_channels, 2 * output_channels)).astype("float32")
+    if mask_type == "img_A":
+        # only need to mask last element of weights (self row) on vert
+        mask_v[-1] = 0.
+        vert = Conv2d(list_of_v_inputs, list_of_v_input_dims,
+                      2 * num_feature_maps,
+                      kernel_size=vert_kernel,
+                      dilation=dilation,
+                      strides=strides,
+                      custom_weight_mask=mask_v,
+                      border_mode=bpad_v,
+                      init=init, scale=scale,
+                      biases=biases, bias_offset=bias_offset,
+                      name=name_vert, random_state=random_state, strict=strict)
+    elif mask_type == "img_B":
+        vert = Conv2d(list_of_v_inputs, list_of_v_input_dims, 2 * num_feature_maps,
+                      kernel_size=vert_kernel,
+                      dilation=dilation,
+                      strides=strides,
+                      border_mode=bpad_v,
+                      init=init, scale=scale,
+                      biases=biases, bias_offset=bias_offset,
+                      name=name_vert, random_state=random_state, strict=strict)
+    else:
+        raise ValueError("Unknown mask_type argument {}".format(mask_type))
+
+
+    horiz_kernel = (1, kernel_size[1] // 2 + 1)
+    bpad_h = ((0, 0), (0, 0), (kernel_size[1] // 2, 0), (0, 0))
+    mask_h = np.ones((1, kernel_size[1] // 2 + 1, input_channels, 2 * output_channels)).astype("float32")
+    if mask_type == "img_A":
+        # only need to mask last element of weights (self col) on horiz
+        mask_h[:, -1] = 0.
+        horiz = Conv2d(list_of_h_inputs, list_of_h_input_dims, 2 * num_feature_maps,
+                       kernel_size=horiz_kernel,
+                       dilation=dilation,
+                       strides=strides,
+                       custom_weight_mask=mask_h,
+                       border_mode=border_mode,
+                       init=init, scale=scale,
+                       biases=biases, bias_offset=bias_offset,
+                       name=name_horiz, random_state=random_state, strict=strict)
+    else:
+        # already checked that mask must be img_B
+        horiz = Conv2d(list_of_h_inputs, list_of_h_input_dims, 2 * num_feature_maps,
+                      kernel_size=horiz_kernel,
+                      dilation=dilation,
+                      strides=strides,
+                      border_mode=border_mode,
+                      init=init, scale=scale,
+                      biases=biases, bias_offset=bias_offset,
+                      name=name_horiz, random_state=random_state, strict=strict)
+
+    vert2horiz = Conv2d([vert], [2 * num_feature_maps], 2 * num_feature_maps,
+                        kernel_size=(1, 1),
+                        dilation=dilation,
+                        strides=strides,
+                        border_mode="same",
+                        init=init, scale=scale,
+                        biases=biases, bias_offset=bias_offset,
+                        name=name_vert2horiz, random_state=random_state, strict=strict)
+
+    def gate(inp):
+        x = inp[..., :num_feature_maps]
+        y = inp[..., num_feature_maps:]
+        return Tanh(x) * Sigmoid(y)
+
+    out_v = gate(vert)
+    out = gate(vert2horiz + horiz)
+    if residual is True:
+        h_r = Conv2d([out], [num_feature_maps], num_feature_maps,
+                     kernel_size=(1, 1),
+                     dilation=dilation,
+                     strides=strides,
+                     border_mode="same",
+                     init=init, scale=scale,
+                     biases=biases, bias_offset=bias_offset,
+                     name=name_horiz_res, random_state=random_state, strict=strict)
+        h_residual = tf.concat(list_of_h_inputs, axis=-1)
+        out_h = h_r + h_residual
+    else:
+        out_h = out
+    return out_v, out_h
+
 
 
 def ConvTranspose2d(list_of_inputs, list_of_input_dims, num_feature_maps,
@@ -773,7 +945,7 @@ def ConvTranspose2d(list_of_inputs, list_of_input_dims, num_feature_maps,
 
     if biases:
         if (init is None) or (type(init) is str):
-            b, = make_numpy_biases([num_feature_maps])
+            b, = make_numpy_biases([num_feature_maps], name=name_b)
         else:
             b = init[1]
         b = b + bias_offset
@@ -916,11 +1088,13 @@ def GRUCell(list_of_inputs, list_of_input_dims,
     else:
         raise ValueError("Unknown init argument {}".format(init))
 
-    name_gate_w = name + "_gru_gate_proj"
+    name_gate = name + "_gru_gate"
+    name_gate_w = name + "_gru_gate_w"
+    name_gate_b = name + "_gru_gate_b"
     gate_w_np, = make_numpy_weights(input_dim + num_units, [2 * num_units],
                                     random_state=random_state,
                                     init=inp_init, name=name_gate_w)
-    gate_b_np, = make_numpy_biases([2 * num_units])
+    gate_b_np, = make_numpy_biases([2 * num_units], name=name_gate_b)
     # Cho's code used 0. bias ?
     gate_b_np = gate_b_np + 1.
 
@@ -929,7 +1103,7 @@ def GRUCell(list_of_inputs, list_of_input_dims,
     gru_gate_proj = Linear(list_of_inputs + [previous_hidden], list_of_input_dims + [num_units],
                            2 * num_units,
                            random_state=random_state,
-                           name=name_gate_w,
+                           name=name_gate,
                            init=(gate_w_np, gate_b_np), strict=strict)
     gru_gate = Sigmoid(gru_gate_proj)
     r, u = tf.split(gru_gate, 2, axis=1)
@@ -937,16 +1111,18 @@ def GRUCell(list_of_inputs, list_of_input_dims,
     state = previous_hidden
     r_state = r * state
 
-    name_proj_w = name + "_gru_proj"
+    name_proj = name + "_gru_proj"
+    name_proj_w = name + "_gru_proj_w"
+    name_proj_b = name + "_gru_proj_b"
     proj_w_np, = make_numpy_weights(input_dim + num_units, [num_units],
                                     random_state=random_state,
                                     init=inp_init, name=name_proj_w)
-    proj_b_np, = make_numpy_biases([num_units])
+    proj_b_np, = make_numpy_biases([num_units], name=name_proj_b)
 
     gru_proj = Linear(list_of_inputs + [previous_hidden], list_of_input_dims + [num_units],
                       num_units,
                       random_state=random_state,
-                      name=name_proj_w,
+                      name=name_proj,
                       init=(proj_w_np, proj_b_np), strict=strict)
 
     _h = Tanh(gru_proj)
@@ -956,11 +1132,13 @@ def GRUCell(list_of_inputs, list_of_input_dims,
 
     if output_dim is not None:
         raise ValueError("NYI")
-        name_out = name + "_lstm_h_to_out",
+        name_out = name + "_gru_h_to_out",
+        name_out_w = name + "_gru_h_to_out_w",
+        name_out_b = name + "_gru_h_to_out_b",
         h_to_out_w_np, = make_numpy_weights(num_units, [output_dim],
                                             random_state=random_state,
-                                            init=out_init, name=name_out)
-        h_to_out_b_np, = make_numpy_biases([output_dim])
+                                            init=out_init, name=name_out_w)
+        h_to_out_b_np, = make_numpy_biases([output_dim], name=name_out_b)
         h_to_out = Linear([h], [num_units], output_dim, random_state=random_state,
                           name=name_out,
                           init=(h_to_out_w_np, h_to_out_b_np), strict=strict)
@@ -1011,18 +1189,20 @@ def LSTMCell(list_of_inputs, list_of_input_dims,
     else:
         raise ValueError("Unknown init argument {}".format(init))
 
-    name_w = name + "_lstm_proj"
+    name_proj = name + "_lstm_proj"
+    name_w = name + "_lstm_proj_w"
+    name_b = name + "_lstm_proj_b"
     comb_w_np, = make_numpy_weights(input_dim + num_units, [hidden_dim],
                                     random_state=random_state,
                                     init=inp_init, name=name_w)
-    comb_b_np, = make_numpy_biases([hidden_dim])
+    comb_b_np, = make_numpy_biases([hidden_dim], name=name_b)
 
     #logger.info("LSTMCell {} input to hidden initialized using init {}".format(name, inp_init))
     #logger.info("LSTMCell {} hidden to hidden initialized using init {}".format(name, h_init))
     lstm_proj = Linear(list_of_inputs + [previous_hidden], list_of_input_dims + [hidden_dim],
                        hidden_dim,
                        random_state=random_state,
-                       name=name_w,
+                       name=name_proj,
                        init=(comb_w_np, comb_b_np), strict=strict)
 
     i, j, f, o = tf.split(lstm_proj, 4, axis=-1)
@@ -1043,10 +1223,12 @@ def LSTMCell(list_of_inputs, list_of_input_dims,
 
     if output_dim is not None:
         name_out = name + "_lstm_h_to_out",
+        name_out_w = name + "_lstm_h_to_out_w",
+        name_out_b = name + "_lstm_h_to_out_b",
         h_to_out_w_np, = make_numpy_weights(num_units, [output_dim],
                                             random_state=random_state,
-                                            init=out_init, name=name_out)
-        h_to_out_b_np, = make_numpy_biases([output_dim])
+                                            init=out_init, name=name_out_w)
+        h_to_out_b_np, = make_numpy_biases([output_dim], name=name_out_b)
         h_to_out = Linear([h], [num_units], output_dim, random_state=random_state,
                           name=name_out,
                           init=(h_to_out_w_np, h_to_out_b_np), strict=strict)

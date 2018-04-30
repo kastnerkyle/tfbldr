@@ -16,7 +16,7 @@ import tensorflow as tf
 import numpy as np
 from collections import namedtuple, defaultdict
 
-sines = make_sinewaves(50, 40)
+sines = make_sinewaves(50, 40, harmonic=True)
 #sines = make_sinewaves(50, 40)
 train_sines = sines[:, ::2]
 train_sines = [train_sines[:, i] for i in range(train_sines.shape[1])]
@@ -41,8 +41,11 @@ valid_itr = list_iterator([valid_sines], 10, random_state=valid_itr_random_state
 
 random_state = np.random.RandomState(1999)
 
-n_hid = 100
-n_emb = 8192
+n_hid = 128
+n_emb = 512
+n_split = 8
+assert n_hid // n_split == n_hid / (float(n_split))
+
 rnn_init = "truncated_normal"
 forward_init = "truncated_normal"
 
@@ -60,10 +63,26 @@ def create_model(inp_tm1, h1_q_init):
         h1_cq_t = s[0]
         c1_q_t = s[1]
         """
-
-        h1_q_t, h1_i_t, h1_nst_q_t, h1_emb = VqEmbedding(h1_cq_t, n_hid, n_emb,
-                                                         random_state=random_state,
-                                                         name="h1_vq_emb")
+        qhs = []
+        ihs = []
+        nst_qhs = []
+        embs = []
+        for i in list(range(n_split)):
+            e_div = int(n_hid / n_split)
+            h1_q_t, h1_i_t, h1_nst_q_t, h1_emb = VqEmbedding(h1_cq_t[:, i * e_div:(i + 1) * e_div],
+                                                             e_div,
+                                                             n_emb,
+                                                             random_state=random_state,
+                                                             # shared space?
+                                                             name="h1_vq_emb")
+                                                             #name="h1_{}_vq_emb".format(i))
+            qhs.append(h1_q_t)
+            ihs.append(h1_i_t[:, None])
+            nst_qhs.append(h1_nst_q_t)
+            embs.append(h1_emb)
+        h1_q_t = tf.concat(qhs, axis=-1)
+        h1_nst_q_t = tf.concat(nst_qhs, axis=-1)
+        h1_i_t = tf.concat(ihs, axis=-1)
 
         # not great
         h1_i_t = tf.cast(h1_i_t, tf.float32)
