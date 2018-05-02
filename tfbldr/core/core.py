@@ -433,10 +433,13 @@ def filled_js_template_from_results_dict(results_dict, default_show="all"):
     # values in
     partial_path = get_resource_dir("js_plot_dependencies")
     full_path = os.path.join(partial_path, "master.zip")
-    url = "http://github.com/kastnerkyle/simple_template_plotter/archive/master.zip"
+    url = "https://github.com/kastnerkyle/simple_template_plotter/archive/master.zip"
     if not os.path.exists(full_path):
         logger.info("Downloading plotter template code from %s" % url)
-        download(url, full_path)
+        if _special_check:
+            download(url, full_path, bypass_certificate_check=True)
+        else:
+            download(url, full_path)
         zip_ref = zipfile.ZipFile(full_path, 'r')
         zip_ref.extractall(partial_path)
         zip_ref.close()

@@ -277,6 +277,7 @@ def np_ortho(shape, random_state, scale=1.):
 
 def make_numpy_biases(bias_dims, name=""):
     logger.info("Initializing {} with {} init".format(name, "zero"))
+    #return [np.random.randn(dim,).astype("float32") for dim in bias_dims]
     return [np_zeros((dim,)) for dim in bias_dims]
 
 
@@ -646,12 +647,14 @@ def Conv2d(list_of_inputs, list_of_input_dims, num_feature_maps,
         _set_shared(name_w, weight)
 
     if custom_weight_mask is not None:
+        """
         try:
             mask = _get_shared(name_mask)
         except NameError:
             mask = tf.Variable(custom_weight_mask, trainable=False, name=name_mask)
             _set_shared(name_mask, mask)
-        weight = mask * weight
+        """
+        weight = tf.constant(custom_weight_mask) * weight
 
     if border_mode == "same":
         pad = "SAME"
@@ -758,13 +761,20 @@ def GatedMaskedConv2d(list_of_v_inputs, list_of_v_input_dims,
     input_width = _shape(input_t)[2]
     output_channels = num_feature_maps
 
-    # left pad by the exact correct amount
+    # left pad by the exact correct amount...
     vert_kernel = (kernel_size[0] // 2 + 1, kernel_size[1])
     bpad_v = ((0, 0), (kernel_size[0] // 2, 0), (kernel_size[1] // 2, kernel_size[1] // 2), (0, 0))
     mask_v = np.ones((kernel_size[0] // 2 + 1, kernel_size[1], input_channels, 2 * output_channels)).astype("float32")
+    """
+    vert_kernel = (kernel_size[0], kernel_size[1])
+    bpad_v = ((0, 0), (kernel_size[0] // 2, kernel_size[0] // 2), (kernel_size[1] // 2, kernel_size[1] // 2), (0, 0))
+    mask_v = np.ones((kernel_size[0], kernel_size[1], input_channels, 2 * output_channels)).astype("float32")
+    """
+
+    # https://github.com/kkleidal/GatedPixelCNNPyTorch/blob/master/note-on-conv-masking.ipynb
     if mask_type == "img_A":
-        # only need to mask last element of weights (self row) on vert
         mask_v[-1] = 0.
+        # only need to mask last element of weights (self row) on vert
         vert = Conv2d(list_of_v_inputs, list_of_v_input_dims,
                       2 * num_feature_maps,
                       kernel_size=vert_kernel,
@@ -787,29 +797,27 @@ def GatedMaskedConv2d(list_of_v_inputs, list_of_v_input_dims,
     else:
         raise ValueError("Unknown mask_type argument {}".format(mask_type))
 
-
     horiz_kernel = (1, kernel_size[1] // 2 + 1)
     bpad_h = ((0, 0), (0, 0), (kernel_size[1] // 2, 0), (0, 0))
     mask_h = np.ones((1, kernel_size[1] // 2 + 1, input_channels, 2 * output_channels)).astype("float32")
     if mask_type == "img_A":
-        # only need to mask last element of weights (self col) on horiz
         mask_h[:, -1] = 0.
+        # only need to mask last element of weights (self col) on horiz
         horiz = Conv2d(list_of_h_inputs, list_of_h_input_dims, 2 * num_feature_maps,
                        kernel_size=horiz_kernel,
                        dilation=dilation,
                        strides=strides,
                        custom_weight_mask=mask_h,
-                       border_mode=border_mode,
+                       border_mode=bpad_h,
                        init=init, scale=scale,
                        biases=biases, bias_offset=bias_offset,
                        name=name_horiz, random_state=random_state, strict=strict)
     else:
-        # already checked that mask must be img_B
         horiz = Conv2d(list_of_h_inputs, list_of_h_input_dims, 2 * num_feature_maps,
                       kernel_size=horiz_kernel,
                       dilation=dilation,
                       strides=strides,
-                      border_mode=border_mode,
+                      border_mode=bpad_h,
                       init=init, scale=scale,
                       biases=biases, bias_offset=bias_offset,
                       name=name_horiz, random_state=random_state, strict=strict)
@@ -842,7 +850,15 @@ def GatedMaskedConv2d(list_of_v_inputs, list_of_v_input_dims,
         h_residual = tf.concat(list_of_h_inputs, axis=-1)
         out_h = h_r + h_residual
     else:
-        out_h = out
+        h_r = Conv2d([out], [num_feature_maps], num_feature_maps,
+                     kernel_size=(1, 1),
+                     dilation=dilation,
+                     strides=strides,
+                     border_mode="same",
+                     init=init, scale=scale,
+                     biases=biases, bias_offset=bias_offset,
+                     name=name_horiz_res, random_state=random_state, strict=strict)
+        out_h = h_r
     return out_v, out_h
 
 

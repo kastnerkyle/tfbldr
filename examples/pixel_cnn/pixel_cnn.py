@@ -55,6 +55,7 @@ def create_pixel_cnn(inp):
     out = Conv2d([r_p], [n_channels], 1, kernel_size=(1, 1),
                  name="conv_o",
                  random_state=random_state)
+    #return out
     s_out = Sigmoid(out)
     return s_out
 
@@ -65,6 +66,8 @@ def create_graph():
         images = tf.placeholder(tf.float32, shape=[None, 28, 28, 1])
         x_tilde = create_pixel_cnn(images)
         loss = tf.reduce_mean(BernoulliCrossEntropyCost(x_tilde, images))
+        #loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=x_tilde, labels=images))
+        #loss = tf.reduce_mean((x_tilde - images) ** 2)
         params = get_params_dict()
         grads = tf.gradients(loss, params.values())
 
@@ -105,6 +108,6 @@ with tf.Session(graph=g) as sess:
     run_loop(sess,
              loop, train_itr,
              loop, val_itr,
-             n_steps=10000,
-             n_train_steps_per=1000,
-             n_valid_steps_per=1000)
+             n_steps=1000 * 1000,
+             n_train_steps_per=5000,
+             n_valid_steps_per=250)
