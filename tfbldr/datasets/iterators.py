@@ -148,8 +148,14 @@ class list_iterator(object):
         for n, ts in enumerate(list_of_iteration_args):
             c = [(li, np.array(tis).shape) for li, tis in enumerate(ts)]
             if len(iteration_args_lengths) > 0:
-                assert c[-1][0] == iteration_args_lengths[-1]
-                assert c[-1][1] == iteration_args_dims[-1]
+                if len(c[-1][1]) == 0:
+                    raise ValueError("iteration_args arguments should be at least 2D arrays, detected 1D")
+                # +1 to handle len vs idx offset
+                if c[-1][0] + 1 != iteration_args_lengths[-1]:
+                    raise ValueError("iteration_args arguments should have the same iteration length (dimension 0)")
+                #if c[-1][1] != iteration_args_dims[-1]:
+                #    from IPython import embed; embed(); raise ValueError()
+
             iteration_args_lengths.append(c[-1][0] + 1)
             iteration_args_dims.append(c[-1][1])
         self.iteration_args_lengths_ = iteration_args_lengths

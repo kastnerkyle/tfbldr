@@ -431,6 +431,8 @@ def Embedding(indices, n_symbols, output_dim, random_state=None,
     """
     Last dimension of indices tensor must be 1!!!!
     """
+    shp = _shape(indices)
+
     if name is None:
         name = _get_name()
 
@@ -475,8 +477,10 @@ def Embedding(indices, n_symbols, output_dim, random_state=None,
     if nd == 3:
         lu = lu[:, :, 0]
         lu = lu[:, 0]
+    elif nd == 2:
+        lu = lu[:, 0]
     else:
-        raise ValueError("Input dimension not handled, Embedding input shape {} results in shape {}".format(shp, shape(lu)))
+        raise ValueError("Input dimension not handled, Embedding input shape {} results in shape {}".format(shp, _shape(lu)))
     return lu, vectors
 
 
@@ -716,6 +720,8 @@ def GatedMaskedConv2d(list_of_v_inputs, list_of_v_input_dims,
                       list_of_h_inputs, list_of_h_input_dims,
                       num_feature_maps,
                       residual=True,
+                      conditioning_class_input=None,
+                      conditioning_num_classes=None,
                       kernel_size=(3, 3),
                       dilation=[1, 1, 1, 1],
                       strides=[1, 1, 1, 1],
@@ -741,8 +747,20 @@ def GatedMaskedConv2d(list_of_v_inputs, list_of_v_input_dims,
     name_horiz = name + "_gated_masked_horiz"
     name_vert2horiz = name + "_gated_masked_vert2horiz"
     name_horiz_res = name + "_gated_masked_conv2d_horiz_res"
+    name_embed = name + "_gated_masked_class_embed"
     name_m_v = name + "_gated_masked_conv2d_mask_vert"
     name_m_h = name + "_gated_masked_conv2d_mask_horiz"
+
+
+    if conditioning_class_input != None:
+        if conditioning_num_classes is None:
+            raise ValueError("If passing conditioning_class_input, must pass conditioning_num_classes")
+        c_e, emb = Embedding(conditioning_class_input, conditioning_num_classes,
+                             2 * num_feature_maps, random_state=random_state, name=name_embed)
+
+        shp = _shape(c_e)
+        if len(shp) != 2:
+            raise ValueError("conditioning_embed result should be 2D (input (N, 1)), got {}".format(shp))
 
     if strict is None:
         strict = get_strict_mode_default()
@@ -836,8 +854,13 @@ def GatedMaskedConv2d(list_of_v_inputs, list_of_v_input_dims,
         y = inp[..., num_feature_maps:]
         return Tanh(x) * Sigmoid(y)
 
-    out_v = gate(vert)
-    out = gate(vert2horiz + horiz)
+    if conditioning_class_input is None:
+        out_v = gate(vert)
+        out = gate(vert2horiz + horiz)
+    else:
+        out_v = gate(vert + c_e[:, None, None, :])
+        out = gate(vert2horiz + horiz + c_e[:, None, None, :])
+
     if residual is True:
         h_r = Conv2d([out], [num_feature_maps], num_feature_maps,
                      kernel_size=(1, 1),
