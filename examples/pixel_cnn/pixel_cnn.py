@@ -1,12 +1,13 @@
-from tfbldr.datasets import fetch_mnist
+from tfbldr.datasets import fetch_fashion_mnist
 from tfbldr.nodes import GatedMaskedConv2d
 from tfbldr.nodes import Conv2d
 #from tfbldr.nodes import VqEmbedding
 from tfbldr.nodes import Embedding
 from tfbldr.nodes import BatchNorm2d
 from tfbldr.nodes import ReLU
-from tfbldr.nodes import Sigmoid
-from tfbldr.nodes import BernoulliCrossEntropyCost
+from tfbldr.nodes import Softmax
+#from tfbldr.nodes import BernoulliCrossEntropyCost
+from tfbldr.nodes import CategoricalCrossEntropyLinearIndexCost
 from tfbldr.datasets import list_iterator
 from tfbldr import get_params_dict
 from tfbldr import run_loop
@@ -14,9 +15,9 @@ import tensorflow as tf
 import numpy as np
 from collections import namedtuple
 
-mnist = fetch_mnist()
-image_data = mnist["images"] / 255.
-label_data = mnist["target"]
+fashion_mnist = fetch_fashion_mnist()
+image_data = fashion_mnist["images"]
+label_data = fashion_mnist["target"]
 # save last 10k to validate on
 train_image_data = image_data[:-10000]
 val_image_data = image_data[-10000:]
@@ -35,7 +36,8 @@ n_channels = 64
 n_layers = 15
 
 def create_pixel_cnn(inp, lbl):
-    l1_v, l1_h = GatedMaskedConv2d([inp], [1], [inp], [1],
+    e_inp, emb = Embedding(inp, 256, n_channels, random_state=random_state, name="inp_emb")
+    l1_v, l1_h = GatedMaskedConv2d([e_inp], [n_channels], [e_inp], [n_channels],
                                    n_channels,
                                    residual=False,
                                    conditioning_class_input=lbl,
@@ -60,11 +62,11 @@ def create_pixel_cnn(inp, lbl):
                      name="conv_c",
                      random_state=random_state)
     r_p = ReLU(cleanup)
-    out = Conv2d([r_p], [n_channels], 1, kernel_size=(1, 1),
+    out = Conv2d([r_p], [n_channels], 256, kernel_size=(1, 1),
                  name="conv_o",
                  random_state=random_state)
-    s_out = Sigmoid(out)
-    return s_out
+    #s_out = Softmax(out)
+    return out#s_out
 
 
 def create_graph():
@@ -73,7 +75,8 @@ def create_graph():
         images = tf.placeholder(tf.float32, shape=[None, 28, 28, 1])
         labels = tf.placeholder(tf.float32, shape=[None, 1])
         x_tilde = create_pixel_cnn(images, labels)
-        loss = tf.reduce_mean(BernoulliCrossEntropyCost(x_tilde, images))
+        loss = tf.reduce_mean(CategoricalCrossEntropyLinearIndexCost(x_tilde, images))
+        #loss = tf.reduce_mean(BernoulliCrossEntropyCost(x_tilde, images))
         #loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=x_tilde, labels=images))
         #loss = tf.reduce_mean((x_tilde - images) ** 2)
         params = get_params_dict()

@@ -518,6 +518,70 @@ def fetch_mnist():
             "test_indices": test_indices.astype(np.int32)}
 
 
+def check_fetch_fashion_mnist():
+    fashion_mnist_dir = get_tfbldr_dataset_dir("fashion_mnist")
+
+    base = "https://raw.githubusercontent.com/kastnerkyle/fashion-mnist/master/data/fashion/"
+    zips = [base + "train-images-idx3-ubyte.gz",
+            base + "train-labels-idx1-ubyte.gz",
+            base + "t10k-images-idx3-ubyte.gz",
+            base + "t10k-labels-idx1-ubyte.gz"]
+
+    for z in zips:
+        fname = z.split("/")[-1]
+        full_path = os.path.join(fashion_mnist_dir, fname)
+        if not os.path.exists(full_path):
+            logger.info("{} not found, downloading...".format(full_path))
+            download(z, full_path, bypass_certificate_check=True)
+    return fashion_mnist_dir
+
+
+def fetch_fashion_mnist():
+    """
+    Flattened or image-shaped 28x28 fashion mnist digits with float pixel values in [0 - 255]
+
+    n_samples : 70000
+    n_feature : 784
+
+    Returns
+    -------
+    summary : dict
+        A dictionary cantaining data and image statistics.
+
+        summary["data"] : float32 array, shape (70000, 784)
+        summary["target"] : int32 array, shape (70000,)
+        summary["images"] : float32 array, shape (70000, 28, 28, 1)
+        summary["train_indices"] : int32 array, shape (50000,)
+        summary["valid_indices"] : int32 array, shape (10000,)
+        summary["test_indices"] : int32 array, shape (10000,)
+
+    """
+    data_path = check_fetch_fashion_mnist()
+    train_image_gz = "train-images-idx3-ubyte.gz"
+    train_label_gz = "train-labels-idx1-ubyte.gz"
+    test_image_gz = "t10k-images-idx3-ubyte.gz"
+    test_label_gz = "t10k-labels-idx1-ubyte.gz"
+
+    out = []
+    for path in [train_image_gz, train_label_gz, test_image_gz, test_label_gz]:
+        f = gzip.open(os.path.join(data_path, path), 'rb')
+        out.append(parse_idx(f))
+        f.close()
+    train_indices = np.arange(0, 50000)
+    valid_indices = np.arange(50000, 60000)
+    test_indices = np.arange(60000, 70000)
+    data = np.concatenate((out[0], out[2]),
+                          axis=0).astype(np.float32)
+    target = np.concatenate((out[1], out[3]),
+                            axis=0).astype(np.int32)
+    return {"data": copy.deepcopy(data.reshape((data.shape[0], -1))),
+            "target": target,
+            "images": data[..., None],
+            "train_indices": train_indices.astype(np.int32),
+            "valid_indices": valid_indices.astype(np.int32),
+            "test_indices": test_indices.astype(np.int32)}
+
+
 def check_fetch_fruitspeech():
     """ Check for fruitspeech data
 

@@ -475,10 +475,14 @@ def Embedding(indices, n_symbols, output_dim, random_state=None,
     nd = len(shp)
     lu = tf.nn.embedding_lookup(vectors, ii)
     if nd == 3:
+        print("nd3 check in embedding")
+        from IPython import embed; embed(); raise ValueError()
         lu = lu[:, :, 0]
         lu = lu[:, 0]
     elif nd == 2:
         lu = lu[:, 0]
+    elif nd == 4:
+        lu = lu[:, :, :, 0]
     else:
         raise ValueError("Input dimension not handled, Embedding input shape {} results in shape {}".format(shp, _shape(lu)))
     return lu, vectors
