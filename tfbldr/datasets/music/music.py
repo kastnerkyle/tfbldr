@@ -1278,20 +1278,24 @@ def music21_to_pitch_duration(p):
         part_time = []
         part_delta_time = []
         total_time = 0
+        all_chord = True
         for n in pi.stream().flat.notesAndRests:
             if n.isRest:
                 part.append(0)
+                all_chord = False
             else:
-                try:
+                if not n.isChord:
                     part.append(n.midi)
-                except AttributeError:
-                    continue
+                    all_chord = False
             part_time.append(total_time + n.duration.quarterLength)
             total_time = part_time[-1]
             part_delta_time.append(n.duration.quarterLength)
-        parts.append(part)
-        parts_times.append(part_time)
-        parts_delta_times.append(part_delta_time)
+        if all_chord:
+            print("Found a part with only chords, skipping...")
+        else:
+            parts.append(part)
+            parts_times.append(part_time)
+            parts_delta_times.append(part_delta_time)
     return parts, parts_times, parts_delta_times
 
 
