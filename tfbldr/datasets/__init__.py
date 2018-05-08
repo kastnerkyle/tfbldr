@@ -21,4 +21,3 @@ from .music import music21_to_piano_roll
 from .music import plot_piano_roll
 from .music import midi_to_notes
 from .music import notes_to_midi
-from .music import romans_to_intervals

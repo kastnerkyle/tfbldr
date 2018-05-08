@@ -1416,27 +1416,44 @@ def GaussianAttentionCell(list_of_step_inputs, list_of_step_input_dims,
     return w_t, k_t, phi_t, state
 
 
-def DiscreteMixtureOfLogistics(list_of_inputs, list_of_input_dims,
+def DiscreteMixtureOfLogistics(list_of_inputs, list_of_input_dims, n_output_channels=1,
                                n_components=10, name=None,
+                               compute_channel_correlations=False,
                                random_state=None, strict=None, init=None):
     if name is None:
         name = _get_name()
     else:
         name = name + "_dmol"
 
+    boundary = int(n_output_channels) * n_components
+    n_output_channels = int(n_output_channels)
     # assume all the same...
     shp0 = _shape(list_of_inputs[0])
     for li in list_of_inputs:
         assert len(shp0) == len(_shape(li))
     if len(shp0) == 4:
-        # https://github.com/openai/weightnorm/blob/master/tensorflow/nn.py#L30
-        # means and log_scales so * 2 , mixtures so + n_components
-        l = Conv2d(list_of_inputs, list_of_input_dims, 2 * n_components + n_components, kernel_size=(1, 1),
-                   name=name + "_conv",
-                   random_state=random_state)
+        if compute_channel_correlations:
+            # based on https://github.com/openai/weightnorm/blob/master/tensorflow/nn.py#L30
+            # original code has 100
+            # 10 * 2 * 3 + 3 * 10 + 10
+            # 10 is for 10 mixtures in first term. 2 is for mean and scale
+            # 3 is for RGB
+            # 3*10 is the coefficients for each mixture. (specific for images. Read pixelCNN++)
+            # The last 10 is mixture components (softmax)
+            l = Conv2d(list_of_inputs, list_of_input_dims, 2 * boundary + n_output_channels * n_components + n_components, kernel_size=(1, 1),
+                       name=name + "_conv",
+                       random_state=random_state)
+            return l[..., 2 * boundary + n_output_channels * n_components:], l[..., :boundary], l[..., boundary:2 * boundary], l[..., 2 * boundary: 2 * boundary + n_output_channels * n_components]
+        else:
+            # https://github.com/openai/weightnorm/blob/master/tensorflow/nn.py#L30
+            # means and log_scales so * 2, each one has (n_channels * n_components) , mixtures so + n_components
+            l = Conv2d(list_of_inputs, list_of_input_dims, 2 * boundary + n_components, kernel_size=(1, 1),
+                       name=name + "_conv",
+                       random_state=random_state)
+            # mixtures, means, scales
+            return l[..., 2 * boundary:], l[..., :boundary], l[..., boundary:2 * boundary]
     else:
         raise ValueError("Input shapes have length {}, not currently supported".format(len(shp0)))
-    return l[..., :n_components], l[..., n_components:2 * n_components], l[..., 2 * n_components:]
 
 
 def log_sum_exp(x):
@@ -1459,6 +1476,8 @@ def log_prob_from_logits(x):
 
 
 def DiscreteMixtureOfLogisticsCost(in_mixtures, in_means, in_lin_scales, target, num_bins,
+                                   channel_correlations=None,
+                                   n_output_channels=1,
                                    min_log_eps=-7):
     """
     based on https://github.com/openai/weightnorm/blob/master/tensorflow/nn.py#L30
@@ -1470,11 +1489,13 @@ def DiscreteMixtureOfLogisticsCost(in_mixtures, in_means, in_lin_scales, target,
     e.g. for images or 8 bit mu-law quantized audio, common to use num_bins=256
     """
     bin_size = float(num_bins - 1)
+    n_output_channels = int(n_output_channels)
+
     if len(_shape(target)) != 4:
         raise ValueError("Target shape != 4 currently unsupported")
     # based on https://github.com/openai/weightnorm/blob/master/tensorflow/nn.py#L30
     # original code has 100
-    # 10 * 2 * 3 + 3 * 10 +10
+    # 10 * 2 * 3 + 3 * 10 + 10
     # 10 is for 10 mixtures in first term. 2 is for mean and scale
     # 3 is for RGB
     # 3*10 is the coefficients for each mixture. (specific for images. Read pixelCNN++)
@@ -1486,14 +1507,27 @@ def DiscreteMixtureOfLogisticsCost(in_mixtures, in_means, in_lin_scales, target,
     nr_mix = n_components
     l = joint
     x = target
-    xs = _shape(x)
     logit_probs = l[:,:,:,:nr_mix]
 
     l = l[:, :, :, nr_mix:][:, :, :, None, :]
-    means = l[:, :, :, :, :nr_mix]
-    log_scales = tf.maximum(l[:, :, :, :, nr_mix: 2 * nr_mix], min_log_eps)
-    # broadcast hacks to get it working
+    means = l[:, :, :, :, :n_output_channels * nr_mix]
+    log_scales = tf.maximum(l[:, :, :, :, n_output_channels * nr_mix:], min_log_eps)
     x = x[..., None] + tf.zeros([1, 1, 1, 1, n_components])
+    if channel_correlations is not None:
+        if n_output_channels <= 1:
+            raise ValueError("Passing channel_correlations with n_output_channels=1 not defined - set n_output_channels")
+        means = tf.reshape(means, xs + [n_components]) 
+        log_scales = tf.reshape(log_scales, xs + [n_components]) 
+        coeffs = tf.tanh(channel_correlations)
+        coeffs = tf.reshape(coeffs, xs + [n_components])
+        ms = [means[:, :, :, 0, :]]
+        channels = np.arange(n_output_channels)
+        for nc in channels[1:]:
+            part = sum([coeffs[:, :, :, i, :] * x[:, :, :, i, :] for i in channels[channels < nc]])
+            mnc = means[:, :, :, nc, :] + part
+            ms.append(mnc)
+        means = tf.concat([msi[:, :, :, None, :] for msi in ms], 3)
+    # broadcast hacks to get it working
     centered_x = x - means
     inv_std = tf.exp(-log_scales)
     plus_in = inv_std * (centered_x + 1. / float(bin_size))

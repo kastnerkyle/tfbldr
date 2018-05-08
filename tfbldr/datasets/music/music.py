@@ -1263,7 +1263,7 @@ def plot_pitches_and_durations(pitches, durations,
             print("Error writing index {}, continuing...".format(n))
 
 
-def music21_to_pitch_duration(p):
+def music21_to_pitch_duration(p, verbose=False):
     """
     Takes in a Music21 score, and outputs 3 list of list
     One for pitch
@@ -1291,7 +1291,8 @@ def music21_to_pitch_duration(p):
             total_time = part_time[-1]
             part_delta_time.append(n.duration.quarterLength)
         if all_chord:
-            print("Found a part with only chords, skipping...")
+            if verbose:
+                print("Found a part with only chords, skipping...")
         else:
             parts.append(part)
             parts_times.append(part_time)

@@ -7,4 +7,3 @@ from .music import music21_to_piano_roll
 from .music import plot_piano_roll
 from .analysis import midi_to_notes
 from .analysis import notes_to_midi
-from .analysis import romans_to_intervals
