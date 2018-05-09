@@ -1433,6 +1433,8 @@ def DiscreteMixtureOfLogistics(list_of_inputs, list_of_input_dims, n_output_chan
         assert len(shp0) == len(_shape(li))
     if len(shp0) == 4:
         if compute_channel_correlations:
+            if n_output_channels != 3:
+                raise ValueError("Need to handle non-3 channels, should be ~2n-1 correlations?...")
             # based on https://github.com/openai/weightnorm/blob/master/tensorflow/nn.py#L30
             # original code has 100
             # 10 * 2 * 3 + 3 * 10 + 10
@@ -1516,6 +1518,8 @@ def DiscreteMixtureOfLogisticsCost(in_mixtures, in_means, in_lin_scales, target,
     if channel_correlations is not None:
         if n_output_channels <= 1:
             raise ValueError("Passing channel_correlations with n_output_channels=1 not defined - set n_output_channels")
+        if n_output_channels != 3:
+            raise ValueError("Need to handle non-3 channels, should be ~2n-1 correlations?...")
         means = tf.reshape(means, xs + [n_components]) 
         log_scales = tf.reshape(log_scales, xs + [n_components]) 
         coeffs = tf.tanh(channel_correlations)
