@@ -7,6 +7,7 @@ import sys
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import copy
 
 
 parser = argparse.ArgumentParser()
@@ -105,4 +106,54 @@ with tf.Session(config=config) as sess:
         valid_z_i += [zz[:, :, None] for zz in z_i]
     valid_z_i = np.array(valid_z_i)
 
-    np.savez("vq_vae_encoded_music.npz", train_z_i=train_z_i, valid_z_i=valid_z_i, train_idx=train_idx, valid_idx=valid_idx, train_which_voice=train_which_voice, valid_which_voice=valid_which_voice)
+train_conditions = []
+twv = np.array(copy.deepcopy(train_which_voice))
+tri = np.array(copy.deepcopy(train_idx))
+ce = np.array(copy.deepcopy(d['centers']))
+
+left_lu = tri - 1
+left_lu[left_lu < 0] = 0
+li = ce[left_lu]
+left = np.array([lli[ttwv] for ttwv, lli in zip(twv, li)])
+
+right_lu = tri + 1
+right_lu[right_lu > max(tri)] = max(tri)
+ri = ce[right_lu]
+right = np.array([rri[ttwv] for ttwv, rri in zip(twv, ri)])
+
+mid_lu = tri
+mi = ce[mid_lu]
+mid = np.array([mmi[ttwv] for ttwv, mmi in zip(twv, mi)])
+
+train_conditions = list(zip(mid - left, mid - right))
+
+vwv = np.array(copy.deepcopy(valid_which_voice))
+vri = np.array(copy.deepcopy(valid_idx))
+
+left_lu = vri - 1
+left_lu[left_lu < 0] = 0
+li = ce[left_lu]
+left = np.array([lli[vvwv] for vvwv, lli in zip(vwv, li)])
+
+right_lu = vri + 1
+right_lu[right_lu > max(vri)] = max(vri)
+ri = ce[right_lu]
+right = np.array([rri[vvwv] for vvwv, rri in zip(vwv, ri)])
+
+mid_lu = vri
+mi = ce[mid_lu]
+mid = np.array([mmi[vvwv] for vvwv, mmi in zip(vwv, mi)])
+
+valid_conditions = list(zip(mid - left, mid - right))
+
+mapper_values = sorted(list(set(train_conditions)) + [(None, None)])
+condition_lookup = {v: k for k, v in enumerate(mapper_values)}
+def mapper(c):
+    return np.array([condition_lookup[ci] if ci in condition_lookup else condition_lookup[(None, None)] for ci in c])[:, None]
+
+train_image_data = train_z_i
+val_image_data = valid_z_i
+train_labels = mapper(train_conditions)
+valid_labels = mapper(valid_conditions)
+
+np.savez("vq_vae_encoded_music.npz", train_z_i=train_z_i, valid_z_i=valid_z_i, train_conditions=train_conditions, valid_conditions=valid_conditions, train_labels=train_labels, valid_labels=valid_labels, mapper_values=mapper_values)

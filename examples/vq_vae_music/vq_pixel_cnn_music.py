@@ -1,12 +1,10 @@
 from tfbldr.datasets import fetch_mnist
 from tfbldr.nodes import GatedMaskedConv2d
 from tfbldr.nodes import Conv2d
-#from tfbldr.nodes import VqEmbedding
 from tfbldr.nodes import Embedding
 from tfbldr.nodes import BatchNorm2d
 from tfbldr.nodes import ReLU
 from tfbldr.nodes import Softmax
-#from tfbldr.nodes import BernoulliCrossEntropyCost
 from tfbldr.nodes import CategoricalCrossEntropyLinearIndexCost
 from tfbldr.datasets import list_iterator
 from tfbldr import get_params_dict
@@ -16,61 +14,14 @@ import numpy as np
 from collections import namedtuple
 import copy
 
-do = np.load("music_data_jos.npz")
 d = np.load("vq_vae_encoded_music.npz")
+train_image_data = copy.deepcopy(d["train_z_i"])
+val_image_data = copy.deepcopy(d["valid_z_i"])
+train_labels = copy.deepcopy(d["train_labels"])
+valid_labels = copy.deepcopy(d["valid_labels"])
 
-# todo: move this into dataset building
-train_conditions = []
-twv = np.array(copy.deepcopy(d['train_which_voice']))
-tri = np.array(copy.deepcopy(d['train_idx']))
-ce = np.array(copy.deepcopy(do['centers']))
-
-left_lu = tri - 1
-left_lu[left_lu < 0] = 0
-li = ce[left_lu]
-left = np.array([lli[ttwv] for ttwv, lli in zip(twv, li)])
-
-right_lu = tri + 1
-right_lu[right_lu > max(tri)] = max(tri)
-ri = ce[right_lu]
-right = np.array([rri[ttwv] for ttwv, rri in zip(twv, ri)])
-
-mid_lu = tri
-mi = ce[mid_lu]
-mid = np.array([mmi[ttwv] for ttwv, mmi in zip(twv, mi)])
-
-train_conditions = list(zip(mid - left, mid - right))
-
-
-vwv = np.array(copy.deepcopy(d['valid_which_voice']))
-vri = np.array(copy.deepcopy(d['valid_idx']))
-
-left_lu = vri - 1
-left_lu[left_lu < 0] = 0
-li = ce[left_lu]
-left = np.array([lli[vvwv] for vvwv, lli in zip(vwv, li)])
-
-right_lu = vri + 1
-right_lu[right_lu > max(vri)] = max(vri)
-ri = ce[right_lu]
-right = np.array([rri[vvwv] for vvwv, rri in zip(vwv, ri)])
-
-mid_lu = vri
-mi = ce[mid_lu]
-mid = np.array([mmi[vvwv] for vvwv, mmi in zip(vwv, mi)])
-
-valid_conditions = list(zip(mid - left, mid - right))
-
-all_conditions = sorted(list(set(train_conditions + valid_conditions)))
-condition_lookup = {v: k for k, v in enumerate(all_conditions)}
-def mapper(c):
-    return np.array([condition_lookup[ci] for ci in c])[:, None]
-
-
-train_image_data = d["train_z_i"]
-val_image_data = d["valid_z_i"]
-train_labels = mapper(train_conditions)
-valid_labels = mapper(valid_conditions)
+n_labels = len(set(list(np.unique(train_labels)) + list(np.unique(valid_labels))))
+print("n_labels {}".format(n_labels))
 
 train_itr_random_state = np.random.RandomState(1122)
 val_itr_random_state = np.random.RandomState(1)
@@ -82,7 +33,7 @@ random_state = np.random.RandomState(1999)
 # only 3x3 in the first place...
 kernel_size0 = (3, 3)
 kernel_size1 = (3, 3)
-n_channels = 64
+n_channels = 32
 n_layers = 15
 
 def create_pixel_cnn(inp, lbl):
@@ -91,7 +42,7 @@ def create_pixel_cnn(inp, lbl):
                                    n_channels,
                                    residual=False,
                                    conditioning_class_input=lbl,
-                                   conditioning_num_classes=10,
+                                   conditioning_num_classes=n_labels,
                                    kernel_size=kernel_size0, name="pcnn0",
                                    mask_type="img_A",
                                    random_state=random_state)
@@ -101,7 +52,7 @@ def create_pixel_cnn(inp, lbl):
         t_v, t_h = GatedMaskedConv2d([o_v], [n_channels], [o_h], [n_channels],
                                      n_channels,
                                      conditioning_class_input=lbl,
-                                     conditioning_num_classes=10,
+                                     conditioning_num_classes=n_labels,
                                      kernel_size=kernel_size1, name="pcnn{}".format(i + 1),
                                      mask_type="img_B",
                                      random_state=random_state)
@@ -174,7 +125,7 @@ with tf.Session(graph=g) as sess:
              loop, val_itr,
              n_steps=100 * 1000,
              n_train_steps_per=5000,
-             n_valid_steps_per=250)
+             n_valid_steps_per=5000)
 
 print("training done")
 from IPython import embed; embed(); raise ValueError()
