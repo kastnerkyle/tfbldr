@@ -43,11 +43,11 @@ def notes_to_midi(notes):
                 base_pitch = 0
                 offset = 0
                 octave = 0
-            elif "#" in nn:
+            elif "#" in nn or "+" in nn:
                 base_pitch = base[nn[0]]
                 offset = 1
                 octave = (int(nn[-1]) + 1) * 12
-            elif "b" in nn:
+            elif "b" in nn or "-" in nn:
                 base_pitch = base[nn[0]]
                 offset = -1
                 octave = (int(nn[-1]) + 1) * 12

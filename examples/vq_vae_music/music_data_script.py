@@ -7,7 +7,8 @@ import numpy as np
 from collections import Counter
 from skimage.transform import resize
 
-basedir = "/u/kastner/music_npz"
+basedir = "/u/kastner/music_npz_jos"
+
 """
 cnt = Counter()
 for fnpz in sorted(os.listdir(basedir)):
@@ -20,22 +21,26 @@ for fnpz in sorted(os.listdir(basedir)):
         measure = d['centered'][mi]
         cnt.update(measure.ravel())
 """
-# truncate to +- 2 octaves
+
 measure_count = 0
 to_keep_measures = []
 to_keep_centers = [] 
 to_keep_keys = []
 to_keep_modes = []
 to_keep_scale_notes = []
+
 for fnpz in sorted(os.listdir(basedir)):
     print(fnpz)
     try:
         d = np.load(basedir + os.sep + fnpz)
     except:
         print("Unable to load {}, continuing".format(fnpz))
+
     if len(d['centered']) < 1 or 'keyname' not in d:
         print(fnpz + " had zero length or no key")
         continue
+    from IPython import embed; embed(); raise ValueError()
+
     for mi in range(len(d['centered'])):
         measure = d['centered'][mi]
         # this drops any measure which introduces or removes rest - not ideal for music... but acceptable for now
