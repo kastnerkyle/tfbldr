@@ -13,8 +13,9 @@ import tensorflow as tf
 import numpy as np
 from collections import namedtuple
 
-d = np.load("music_data_jos.npz")
+d = np.load("music_data_jos_1d.npz")
 #mnist = fetch_mnist()
+from IPython import embed; embed(); raise ValueError()
 image_data = d["measures"]
 image_data = np.concatenate((image_data[..., 0][..., None],
                              image_data[..., 1][..., None],

@@ -445,7 +445,7 @@ def midi_to_notes(parts):
             if pi == 0:
                 this_notes.append("R")
                 continue
-            octave = pi // 12 - 1
+            octave = int(pi // 12 - 1)
             pos = base_note_map[pi % 12]
             this_notes.append(pos + str(octave))
         all_parts.append(this_notes)

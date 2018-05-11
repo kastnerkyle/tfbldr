@@ -8,6 +8,7 @@ import numpy as np
 from collections import Counter
 from tfbldr.datasets import notes_to_midi
 from tfbldr.datasets import midi_to_notes
+from functools import reduce
 
 basedir = "/u/kastner/music_npz_jos"
 
@@ -28,6 +29,8 @@ all_filenames = []
 all_measurenums = []
 all_piano_rolls = []
 all_pitch_duration = []
+all_functional_notes = []
+all_functional_voicings = []
 all_keyframes = []
 all_indexed = []
 all_absolutes = []
@@ -82,7 +85,45 @@ for fnpz in sorted(os.listdir(basedir)):
     keys = []
     modes = []
     scalenotes = []
+    functional_notes = []
+    functional_voicings = []
 
+    func_notes_lu = {}
+    func_notes_lu["R"] = 0
+    # R is always in the lowest voicing -> R0
+    for ii, note in enumerate(notes):
+        for octave in ["1", "2", "3", "4", "5"]:
+             # hack to represent it in the form we get from midi_to_notes
+             # basically changing E-3 -> Eb3 , etc
+             nnn = midi_to_notes(notes_to_midi([[note + octave]]))[0][0]
+             func_notes_lu[nnn] = ii + 1
+
+    func_voicings_lu = {}
+    # hardcode for 4 voices for now
+    count = 0
+    for o1 in [0, 1, 2, 3, 4, 5]:
+        for o2 in [0, 1, 2, 3, 4, 5]:
+            for o3 in [0, 1, 2, 3, 4, 5]:
+                for o4 in [0, 1, 2, 3, 4, 5]:
+                    oo = [o1, o2, o3, o4]
+                    nz = [ooi for ooi in oo if ooi != 0]
+                    # can only be an ordering with at least 2
+                    if len(nz) == 0 or len(nz) == 1:
+                        func_voicings_lu[tuple(oo)] = count
+                        count += 1
+                    else:
+                        rr = range(len(nz))
+                        ordered = True
+                        for i, j in zip(rr[:-1], rr[1:]):
+                            if nz[i] <= nz[j]:
+                                ordered =True 
+                            else:
+                                ordered = False
+                        if ordered:# and max(np.diff(nz)) <= 3:
+                            func_voicings_lu[tuple(oo)] = count
+                            count += 1
+
+    inv_func_voicings = {v: k for k, v in func_voicings_lu.items()}
     last_non_rest = [0, 0, 0, 0]
     for n in range(len(prs)):
         # key and mode delta normalized repr
@@ -139,6 +180,22 @@ for fnpz in sorted(os.listdir(basedir)):
                 if len(non_rest) > 0:
                     last_non_rest[v] = scale_lu[midi_lu[non_rest[0]]]
 
+        func = midi_to_notes(pr_i)
+        func_notes_i = np.zeros_like(pr_i)
+        func_voicings_i = np.zeros_like(pr_i[:, 0])
+        loop_reset = False
+        for iii in range(len(pr_i)):
+            fvi = [int(fi[-1]) if fi != "R" else 0 for fi in func[iii]]
+            if tuple(fvi) not in func_voicings_lu:
+                loop_reset = True
+                break
+            fni_idx = [func_notes_lu[fnii] for fnii in func[iii]]
+            fvi_idx = func_voicings_lu[tuple(fvi)]
+            func_notes_i[iii] = np.array(fni_idx)
+            func_voicings_i[iii] = fvi_idx
+        if loop_reset:
+            continue
+
         # put the scale notes in
         out = np.zeros_like(pr_i)
         for unote in np.unique(pr_i):
@@ -173,6 +230,9 @@ for fnpz in sorted(os.listdir(basedir)):
         keyframes.append(copy.deepcopy(last_non_rest))
         measurenums.append(n)
         absolutes.append(absolute)
+        functional_notes.append(func_notes_i)
+        functional_voicings.append(func_voicings_i)
+
 
         for v in range(pr_i.shape[-1]):
             non_rest = pr_i[pr_i[:, v] > 0, v]
@@ -189,6 +249,8 @@ for fnpz in sorted(os.listdir(basedir)):
         all_indexed.append(indexed)
         all_keyframes.append(keyframes)
         all_absolutes.append(absolutes)
+        all_functional_notes.append(functional_notes)
+        all_functional_voicings.append(functional_voicings)
         all_measurenums.append(measurenums)
         all_filenames.append(filenames)
         all_keys.append(keys)
