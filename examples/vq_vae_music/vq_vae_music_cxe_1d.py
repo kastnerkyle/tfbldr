@@ -1,22 +1,26 @@
 from tfbldr.datasets import fetch_mnist
 from tfbldr.nodes import Conv2d
 from tfbldr.nodes import ConvTranspose2d
+from tfbldr.nodes import Embedding
 from tfbldr.nodes import VqEmbedding
 from tfbldr.nodes import BatchNorm2d
 from tfbldr.nodes import ReLU
-from tfbldr.nodes import DiscreteMixtureOfLogistics
-from tfbldr.nodes import DiscreteMixtureOfLogisticsCost
-from tfbldr.nodes import BernoulliCrossEntropyCost
+from tfbldr.nodes import CategoricalCrossEntropyLinearIndexCost
 from tfbldr.datasets import list_iterator
 from tfbldr import get_params_dict
 from tfbldr import run_loop
 import tensorflow as tf
 import numpy as np
+import copy
 from collections import namedtuple
 
-d = np.load("music_data.npz")
-#mnist = fetch_mnist()
-image_data = 2 * d["measures"] - 1.
+d = np.load("music_data_1d.npz")
+raw_data = copy.deepcopy(d["absolutes"])
+stacked = [rdi[None] for rd in raw_data for rdi in rd]
+# vocabulary
+# np.vstack(sorted(list({tuple(row) for row in np.array(stacked).reshape(-1, 4)})))
+
+image_data = stacked
 shuffle_random = np.random.RandomState(112)
 shuffle_random.shuffle(image_data)
 # save last 1k to validate on
@@ -24,24 +28,28 @@ train_image_data = image_data[:-1000]
 val_image_data = image_data[-1000:]
 train_itr_random_state = np.random.RandomState(1122)
 val_itr_random_state = np.random.RandomState(1)
-train_itr = list_iterator([train_image_data], 64, random_state=train_itr_random_state)
-val_itr = list_iterator([val_image_data], 64, random_state=val_itr_random_state)
+train_itr = list_iterator([train_image_data], 32, random_state=train_itr_random_state)
+val_itr = list_iterator([val_image_data], 32, random_state=val_itr_random_state)
 
 random_state = np.random.RandomState(1999)
-l1_dim = (64, 1, 4, [1, 1, 2, 1])
-l2_dim = (128, 1, 4, [1, 1, 2, 1])
-l3_dim = (257, 1, 4, [1, 1, 2, 1])
-l4_dim = (256, 1, 1, [1, 1, 1, 1])
+l1_dim = (128, 1, 4, [1, 1, 2, 1])
+l2_dim = (256, 1, 4, [1, 1, 2, 1])
+l3_dim = (512, 1, 1, [1, 1, 1, 1])
+inp_emb_dim = 128
 embedding_dim = 256
-n_components = 10
-dmol_proj = 64
-l_dims = [l1_dim, l2_dim, l3_dim, l4_dim]
+n_out = 36 # 7 scale notes over 5 octaves + 1 for rest
+l_dims = [l1_dim, l2_dim, l3_dim]
 stride_div = np.prod([ld[-1] for ld in l_dims])
 ebpad = [0, 0, 4 // 2 - 1, 0]
 dbpad = [0, 0, 4 // 2 - 1, 0]
 
 def create_encoder(inp, bn_flag):
-    l1 = Conv2d([inp], [3], l_dims[0][0], kernel_size=l_dims[0][1:3], name="enc1",
+    e_inps = []
+    for ci in range(4):
+        e_inp, emb = Embedding(inp[..., ci][..., None], n_out, inp_emb_dim, random_state=random_state, name="inp_emb_{}".format(ci))
+        e_inps.append(e_inp)
+    e_inp = tf.concat(e_inps, axis=-1)
+    l1 = Conv2d([e_inp], [4 * inp_emb_dim], l_dims[0][0], kernel_size=l_dims[0][1:3], name="enc1",
                 strides=l_dims[0][-1],
                 border_mode=ebpad,
                 random_state=random_state)
@@ -56,16 +64,9 @@ def create_encoder(inp, bn_flag):
     r_l2 = ReLU(bn_l2)
 
     l3 = Conv2d([r_l2], [l_dims[1][0]], l_dims[2][0], kernel_size=l_dims[2][1:3], name="enc3",
-                strides=l_dims[2][-1],
-                border_mode=ebpad,
                 random_state=random_state)
     bn_l3 = BatchNorm2d(l3, bn_flag, name="bn_enc3")
-    r_l3 = ReLU(bn_l3)
-
-    l4 = Conv2d([r_l3], [l_dims[2][0]], l_dims[3][0], kernel_size=l_dims[3][1:3], name="enc4",
-                random_state=random_state)
-    bn_l4 = BatchNorm2d(l4, bn_flag, name="bn_enc4")
-    return bn_l4
+    return bn_l3
 
 
 def create_decoder(latent, bn_flag):
@@ -81,37 +82,27 @@ def create_decoder(latent, bn_flag):
     bn_l2 = BatchNorm2d(l2, bn_flag, name="bn_dec2")
     r_l2 = ReLU(bn_l2)
 
-    l3 = ConvTranspose2d([r_l2], [l_dims[-3][0]], l_dims[-4][0], kernel_size=l_dims[-3][1:3], name="dec3",
+    l3 = ConvTranspose2d([r_l2], [l_dims[-3][0]], 4 * n_out, kernel_size=l_dims[-3][1:3], name="dec3",
                          strides=l_dims[-3][-1],
                          border_mode=dbpad,
                          random_state=random_state)
-    bn_l3 = BatchNorm2d(l3, bn_flag, name="bn_dec3")
-    r_l3 = ReLU(bn_l3)
-
-    l4 = ConvTranspose2d([r_l3], [l_dims[-4][0]], dmol_proj, kernel_size=l_dims[-4][1:3], name="dec4",
-                         strides=l_dims[-4][-1],
-                         border_mode=dbpad,
-                         random_state=random_state)
-    l4_mix, l4_means, l4_lin_scales, l4_coeffs = DiscreteMixtureOfLogistics([l4], [dmol_proj], n_output_channels=3, compute_channel_correlations=True, n_components=n_components, name="d_out", random_state=random_state)
-    return l4_mix, l4_means, l4_lin_scales, l4_coeffs
+    return tf.reshape(l3, (-1, 1, 48, 4, n_out))
 
 
 def create_vqvae(inp, bn):
     z_e_x = create_encoder(inp, bn)
     z_q_x, z_i_x, z_nst_q_x, emb = VqEmbedding(z_e_x, l_dims[-1][0], embedding_dim, random_state=random_state, name="embed")
-    x_tilde_mix, x_tilde_means, x_tilde_lin_scales, x_tilde_coeffs = create_decoder(z_q_x, bn)
-    return x_tilde_mix, x_tilde_means, x_tilde_lin_scales, x_tilde_coeffs, z_e_x, z_q_x, z_i_x, z_nst_q_x, emb
+    x_tilde_lin = create_decoder(z_q_x, bn)
+    return x_tilde_lin, z_e_x, z_q_x, z_i_x, z_nst_q_x, emb
 
 
 def create_graph():
     graph = tf.Graph()
     with graph.as_default():
-        images = tf.placeholder(tf.float32, shape=[None, 1, 48, 3])
+        images = tf.placeholder(tf.float32, shape=[None, 1, 48, 4])
         bn_flag = tf.placeholder_with_default(tf.zeros(shape=[]), shape=[])
-        x_tilde_mix, x_tilde_means, x_tilde_lin_scales, x_tilde_coeffs, z_e_x, z_q_x, z_i_x, z_nst_q_x, z_emb = create_vqvae(images, bn_flag)
-        from IPython import embed; embed(); raise ValueError()
-        rec_loss = tf.reduce_mean(DiscreteMixtureOfLogisticsCost(x_tilde_mix, x_tilde_means, x_tilde_lin_scales, images, 256, n_output_channels=3, channel_correlations=x_tilde_coeffs))
-        #rec_loss = tf.reduce_mean(BernoulliCrossEntropyCost(x_tilde, images))
+        x_tilde, z_e_x, z_q_x, z_i_x, z_nst_q_x, z_emb = create_vqvae(images, bn_flag)
+        rec_loss = tf.reduce_mean(CategoricalCrossEntropyLinearIndexCost(x_tilde, images))
         vq_loss = tf.reduce_mean(tf.square(tf.stop_gradient(z_e_x) - z_nst_q_x))
         commit_loss = tf.reduce_mean(tf.square(z_e_x - tf.stop_gradient(z_nst_q_x)))
         #rec_loss = tf.reduce_mean(tf.reduce_sum(BernoulliCrossEntropyCost(x_tilde, images), axis=[1, 2]))
@@ -130,10 +121,7 @@ def create_graph():
 
     things_names = ["images",
                     "bn_flag",
-                    "x_tilde_mix",
-                    "x_tilde_means",
-                    "x_tilde_lin_scales",
-                    "x_tilde_coeffs",
+                    "x_tilde",
                     "z_e_x",
                     "z_q_x",
                     "z_i_x",
@@ -171,6 +159,7 @@ with tf.Session(graph=g) as sess:
     run_loop(sess,
              loop, train_itr,
              loop, val_itr,
-             n_steps=10000,
-             n_train_steps_per=1000,
+             n_steps=100000,
+             n_train_steps_per=5000,
              n_valid_steps_per=1000)
+from IPython import embed; embed(); raise ValueError()

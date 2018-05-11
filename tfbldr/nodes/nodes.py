@@ -1769,4 +1769,7 @@ def CategoricalCrossEntropyIndexCost(predicted, target, eps=1E-8):
 
 
 def CategoricalCrossEntropyLinearIndexCost(linear_predicted, target):
-    return tf.nn.sparse_softmax_cross_entropy_with_logits(logits=linear_predicted, labels=tf.cast(target[..., 0], tf.int32))
+    if _shape(target)[-1] == 1:
+        return tf.nn.sparse_softmax_cross_entropy_with_logits(logits=linear_predicted, labels=tf.cast(target[..., 0], tf.int32))
+    else:
+        return tf.nn.sparse_softmax_cross_entropy_with_logits(logits=linear_predicted, labels=tf.cast(target, tf.int32))

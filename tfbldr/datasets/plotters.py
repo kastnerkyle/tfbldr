@@ -37,7 +37,7 @@ def save_image_array(img, filename, rescale=True, fmt="png"):
     if rescale:
         img_max = np.max(img)
         img_min = np.min(img)
-        #scale to 0, 1
+        # scale to 0, 1
         img = (img - img_min) / float(img_max - img_min)
         # scale 0, 1 to 0, 255
         img *= 255.

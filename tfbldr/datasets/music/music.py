@@ -1318,6 +1318,7 @@ def ribbons_from_piano_roll(piano_roll, ribbon_type, quantized_bin_size,
 def plot_piano_roll(piano_roll, quantized_bin_size,
                     pitch_bot=1, pitch_top=88,
                     colors=["red", "blue", "green", "purple"],
+                    return_img_like=True,
                     ribbons=False,
                     ribbon_type="std",
                     axis_handle=None,
@@ -1330,9 +1331,12 @@ def plot_piano_roll(piano_roll, quantized_bin_size,
     import matplotlib.pyplot as plt
     import matplotlib.patches as mpatches
     from matplotlib.colors import colorConverter
+    from matplotlib.figure import Figure
+    from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
     import matplotlib as mpl
 
     if axis_handle is None:
+        fig = Figure()
         ax = plt.gca()
 
     time_len = len(piano_roll)
@@ -1379,6 +1383,7 @@ def plot_piano_roll(piano_roll, quantized_bin_size,
 
     for v in range(n_voices):
         ax.imshow(voice_storage[:, :, v].T, cmap=cmaps[v], interpolation=None)
+
     ax.set_ylim([mn, mx])
     ax.set_xlabel("Timestep")
     ax.set_ylabel("Pitch")
@@ -1395,11 +1400,23 @@ def plot_piano_roll(piano_roll, quantized_bin_size,
             return mn / float(mx)
     asp = autoaspect(mx - mn, autoscale_ratio * len(voice_storage))
     ax.set_aspect(asp)
+    if not show and return_img_like:
+        fig = plt.gcf()
+        canvas = FigureCanvas(fig)
+        ax.axis("off")
+        canvas.draw()
+        width, height = fig.get_size_inches() * fig.get_dpi() 
+        width = int(width)
+        height = int(height)
+        img = np.fromstring(canvas.tostring_rgb(), dtype='uint8').reshape(height, width, 3)
+        return img
+        
     patch_list = [mpatches.Patch(color=c, alpha=.6, label="Voice {}".format(v)) for c, v in zip(colors, list(range(n_voices)))]
     ax.legend(handles=patch_list, bbox_to_anchor=(0., -.3, 1., .102), loc=1,
               ncol=1, borderaxespad=0.)
     if show:
         plt.show()
+    # ????
     return voice_storage, ribbons_traces
 
 

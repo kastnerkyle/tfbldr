@@ -30,6 +30,7 @@ all_piano_rolls = []
 all_pitch_duration = []
 all_keyframes = []
 all_indexed = []
+all_absolutes = []
 all_keys = []
 all_modes = []
 all_scalenotes = []
@@ -49,7 +50,9 @@ for fnpz in sorted(os.listdir(basedir)):
     pds = copy.deepcopy(d["pitch_duration"])
     key = d["keyname"]
     mode = d["keymode"]
-    notes = d["keynotes"]
+    # last note is octave of the root, skip it
+    notes = d["keynotes"][:-1]
+    assert sorted(list(set(d["keynotes"]))) == sorted(list(notes))
 
     scale_lu = {}
     scale_lu["R"] = 0
@@ -61,6 +64,7 @@ for fnpz in sorted(os.listdir(basedir)):
             ordered_scale.append(note + octave)
             scale_lu[note + octave] = counter
             counter += 1
+
     norm_lu = {v: k for k, v in scale_lu.items()}
 
     notes_lu = {os: notes_to_midi([[os]])[0][0] for os in ordered_scale}
@@ -74,6 +78,7 @@ for fnpz in sorted(os.listdir(basedir)):
     measurenums = []
     keyframes = []
     indexed = []
+    absolutes = []
     keys = []
     modes = []
     scalenotes = []
@@ -134,10 +139,11 @@ for fnpz in sorted(os.listdir(basedir)):
                 if len(non_rest) > 0:
                     last_non_rest[v] = scale_lu[midi_lu[non_rest[0]]]
 
-        # put the midi notes in
+        # put the scale notes in
         out = np.zeros_like(pr_i)
         for unote in np.unique(pr_i):
             out[pr_i == unote] = scale_lu[midi_lu[unote]]
+        absolute = copy.deepcopy(out)
 
         # calculate their offset relative to the keyframe
         # should become - whatever , 0 rest, 1 whatever where 1 is "same as keyframe"
@@ -166,6 +172,7 @@ for fnpz in sorted(os.listdir(basedir)):
         indexed.append(final)
         keyframes.append(copy.deepcopy(last_non_rest))
         measurenums.append(n)
+        absolutes.append(absolute)
 
         for v in range(pr_i.shape[-1]):
             non_rest = pr_i[pr_i[:, v] > 0, v]
@@ -181,6 +188,7 @@ for fnpz in sorted(os.listdir(basedir)):
         all_pitch_duration.append(pd_i)
         all_indexed.append(indexed)
         all_keyframes.append(keyframes)
+        all_absolutes.append(absolutes)
         all_measurenums.append(measurenums)
         all_filenames.append(filenames)
         all_keys.append(keys)
@@ -191,7 +199,8 @@ final = {}
 final["piano_rolls"] = all_piano_rolls
 final["pitch_duration"] = all_pitch_duration
 final["indexed"] = all_indexed
-final["keyframs"] = all_keyframes
+final["absolutes"] = all_absolutes
+final["keyframes"] = all_keyframes
 final["measurenums"] = all_measurenums
 final["filenames"] = all_filenames
 final["keys"] = all_keys
