@@ -7,7 +7,7 @@ import PIL.Image
 import shutil
 from math import sqrt
 
-def save_image_array(img, filename, rescale=True, fmt="png"):
+def save_image_array(img, filename, rescale=True, flipud=True, fmt="png"):
     """
     Expects a 4D image array of (n_images, height, width, channels)
 
@@ -20,6 +20,9 @@ def save_image_array(img, filename, rescale=True, fmt="png"):
 
     if len(img.shape) != 4:
        raise ValueError("Expects a 4D image array of (n_images, height, width, channels)")
+
+    if flipud:
+        img = img[:, ::-1]
 
     if img.shape[0] != 1:
         n = len(img)

@@ -950,10 +950,30 @@ def ConvTranspose2d(list_of_inputs, list_of_input_dims, num_feature_maps,
         weight = tf.Variable(weight_values, trainable=True, name=name_w)
         _set_shared(name_w, weight)
 
+    shp = _shape(input_t)
+    btch_sz = tf.shape(input_t)[0]
+    """
+    # http://www.riptutorial.com/tensorflow/example/29767/using-tf-nn-conv2d-transpose-for-arbitary-batch-sizes-and-with-automatic-output-shape-calculation-
+        if padding == 'VALID':
+          output_size_h = (input_size_h - 1)*stride_h + filter_size_h
+          output_size_w = (input_size_w - 1)*stride_w + filter_size_w
+        elif padding == 'SAME':
+          output_size_h = (input_size_h - 1)*stride_h + 1
+          output_size_w = (input_size_w - 1)*stride_w + 1
+    """
+
     if border_mode == "same":
         pad = "SAME"
+        out_shp = [btch_sz,
+                   (input_height - 1) * strides[1] + 1, #2 * new_pad[1] + kernel_size[0],
+                   (input_width - 1) * strides[2] + 1, #2 * new_pad[2] + kernel_size[1],
+                   num_feature_maps]
     elif border_mode == "valid":
         pad = "VALID"
+        out_shp = [btch_sz,
+                   (input_height - 1) * strides[1] + kernel_size[0], #2 * new_pad[1] + kernel_size[0],
+                   (input_width - 1) * strides[2] + kernel_size[1], #2 * new_pad[2] + kernel_size[1],
+                   num_feature_maps]
     else:
         try:
             int(border_mode)
@@ -974,14 +994,12 @@ def ConvTranspose2d(list_of_inputs, list_of_input_dims, num_feature_maps,
                                    [new_pad[3]] * 2], "CONSTANT")
         """
         pad = "SAME"
+        # calcs from PyTorch docs
+        out_shp = [btch_sz,
+                   (input_height - 1) * strides[1] - 2 * new_pad[1] + kernel_size[0],
+                   (input_width - 1) * strides[2] - 2 * new_pad[2] + kernel_size[1],
+                   num_feature_maps]
 
-    shp = _shape(input_t)
-    btch_sz = tf.shape(input_t)[0]
-    # calcs from PyTorch docs
-    out_shp = [btch_sz,
-               (input_height - 1) * strides[1] - 2 * new_pad[1] + kernel_size[0],
-               (input_width - 1) * strides[2] - 2 * new_pad[2] + kernel_size[1],
-               num_feature_maps]
     output_shape = tf.stack(out_shp)
     out = tf.nn.conv2d_transpose(input_t, weight, output_shape, strides, padding=pad)
     out = tf.reshape(out, out_shp)

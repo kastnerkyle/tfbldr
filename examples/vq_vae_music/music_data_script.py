@@ -1,116 +1,91 @@
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-
-import os
+import copy
 import numpy as np
-from collections import Counter
-from skimage.transform import resize
+from collections import OrderedDict
 
-basedir = "/u/kastner/music_npz_jos"
+from tfbldr.datasets import notes_to_midi
+from tfbldr.datasets import midi_to_notes
+from tfbldr.datasets import save_image_array
 
-"""
-cnt = Counter()
-for fnpz in sorted(os.listdir(basedir)):
-    print(fnpz)
-    d = np.load(basedir + os.sep + fnpz)
-    if len(d['centered']) < 1:
-        print(fnpz + " had zero length")
-        continue
-    for mi in range(len(d['centered'])):
-        measure = d['centered'][mi]
-        cnt.update(measure.ravel())
-"""
+d = np.load("music_data_jos_1d.npz")
+all_notes = copy.deepcopy(d['functional_notes'])
+all_scalenotes = copy.deepcopy(d['scalenotes'])
+all_chordnames = copy.deepcopy(d['chords_names'])
+# scale tones in 5 octaves + 1 for rest
+#v_imsize = 7 * 5 + 1
+v_imsize = 48
+h_imsize = 48
+oh_lu = np.eye(v_imsize).astype("uint8")
+all_measures_as_images = []
+all_scalenotes_save = []
+all_chordnames_save = []
+all_midi_to_norm_kv = []
+all_note_to_norm_kv = []
+for iii in range(len(all_notes)):
+    print(iii)
+    scalenotes = all_scalenotes[iii][0] # scale constant over piece
+    note_to_norm_lu = OrderedDict()
+    note_to_norm_lu["R"] = 0
+    midi_to_norm_lu = OrderedDict()
+    midi_to_norm_lu[0] = 0
+    # find lowest and highest notes , image
+    min_s_m = np.inf
+    min_s = None
+    max_s_m = -np.inf
+    max_s = None
+    for s in scalenotes:
+        m1 = notes_to_midi([[s + "1"]])[0][0]
+        m5 = notes_to_midi([[s + "5"]])[0][0]
+        if m1 < min_s_m:
+            min_s_m = m1
+            min_s = s
+        if m5 > max_s_m:
+            max_s_m = m5
+            max_s = s
 
-measure_count = 0
-to_keep_measures = []
-to_keep_centers = [] 
-to_keep_keys = []
-to_keep_modes = []
-to_keep_scale_notes = []
+    reordered_scale = []
+    start = False
+    for s in scalenotes + scalenotes:
+        if s == min_s:
+            start = True
+        if start:
+            reordered_scale.append(s)
+        if start and s == max_s:
+            break
 
-for fnpz in sorted(os.listdir(basedir)):
-    print(fnpz)
-    try:
-        d = np.load(basedir + os.sep + fnpz)
-    except:
-        print("Unable to load {}, continuing".format(fnpz))
+    counter = 1
+    keep = False
+    for octave in ["1", "2", "3", "4", "5"]:
+        for note in scalenotes:
+            nnm = notes_to_midi([[note + octave]])[0][0]
+            nn = midi_to_notes([[nnm]])[0][0][:-1]
+            note_to_norm_lu[note + octave] = counter
+            midi_to_norm_lu[nnm] = counter
+            counter += 1
 
-    if len(d['centered']) < 1 or 'keyname' not in d:
-        print(fnpz + " had zero length or no key")
-        continue
-    from IPython import embed; embed(); raise ValueError()
+    measures_as_images = []
+    for mi in range(len(all_notes[iii])):
+        measure = all_notes[iii][mi]
+        im = np.zeros((v_imsize, h_imsize, 1)).astype("uint8")
+        midi_m = notes_to_midi(measure)
+        for v in range(len(midi_m[0])):
+            for t in range(len(midi_m)):
+                im[:, t] |= oh_lu[midi_to_norm_lu[midi_m[t][v]]][..., None]
 
-    for mi in range(len(d['centered'])):
-        measure = d['centered'][mi]
-        # this drops any measure which introduces or removes rest - not ideal for music... but acceptable for now
-        if (measure[measure > -99] > 24).any() or (measure[measure > -99] < -23).any():
-            pass
-        else:
-            measure_count += 1
-            to_keep_measures.append(d['centered'][mi])
-            to_keep_centers.append(d['offset'][mi])
-            to_keep_keys.append(d['keyname'])
-            to_keep_modes.append(d['keymode'])
-            to_keep_scale_notes.append(d['keynotes'])
+        im = im.astype("float32")
+        measures_as_images.append(im)
+        # track in case something is skipped
+    all_measures_as_images.append(measures_as_images)
+    all_scalenotes_save.append([scalenotes] * len(measures_as_images))
+    all_chordnames_save.append(all_chordnames[iii])
+    all_midi_to_norm_kv.append([(k, v) for k, v in midi_to_norm_lu.items()])
+    all_note_to_norm_kv.append([(k, v) for k, v in note_to_norm_lu.items()])
 
-
-mapper = {m: n for n, m in enumerate(np.arange(-23, 24 + 1))}
-
-measures_as_images = []
-measures_indices = []
-for n in range(len(to_keep_measures)):
-    if not (n % 1000):
-        print("processing {}".format(n))
-    if to_keep_measures[n].shape[-1] == 4:
-        this_measure = to_keep_measures[n][:, :-1]
-    elif to_keep_measures[n].shape[-1] == 3:
-        this_measure = to_keep_measures[n]
-    else:
-        print("measure {} size not 4 or 3, skip it".format(n))
-        continue
-
-    if (this_measure > -99).sum() == 0:
-        print("measure {} all rest, skip it".format(n))
-        continue
-    v_imsize = 48 # (-23 to +24, inclusive w 0 = 48) 
-    # gonna have to resize or something...
-    h_imsize = len(this_measure)
-    # 3 voices, ordered 0 == bass, 1 == tenor, 2 == soprano/alto
-    # mask ordering will be bass (least conditioning) -> soprano (most conditioning)
-    im = np.zeros((v_imsize, h_imsize, 3)).astype("float32")
-    for c in list(range(this_measure.shape[-1])):
-        for ii in np.arange(-23, 24 + 1):
-            # 3 voices, ordered 0 == bass, 1 == tenor, 2 == soprano/alto, happens here
-            im[mapper[ii], :, 2 - c] = 1. * (this_measure[:, c] == ii)
-
-    measures_as_images.append(im)
-    # track in case something is skipped
-    measures_indices.append(n)
-    """
-    if (this_measure[:, 0] > -99).sum() != 0 and (this_measure[:, 1] > -99).sum() != 0 and (this_measure[:, 2] > -99).sum() != 0:
-        print("n, {}".format(n))
-        plt.imshow(im, origin="lower")
-        plt.savefig("exim.png")
-    """
-
+# TODO: PUT CHORDS IN LINE FOR EASY CONDITIONING
 final = {}
-final["measures"] = []
-final["centers"] = []
-final["keys"] = []
-final["modes"] = []
-final["scale_notes"] = []
-for i in range(len(measures_as_images)):
-    ti = measures_as_images[i]
-    li = measures_indices[i]
-    if ti.shape != (48, 48, 3):
-        rsz = resize(ti, (48, 48, 3))
-        rsz[rsz <= 0.5] = 0.
-        rsz[rsz > 0.5] = 1.
-        ti = rsz
-    final["measures"].append(ti)
-    final["centers"].append(to_keep_centers[li])
-    final["keys"].append(to_keep_keys[li])
-    final["modes"].append(to_keep_modes[li])
-    final["scale_notes"].append(to_keep_scale_notes[li])
+final["measures_as_images"] = all_measures_as_images
+final["scalenotes"] = all_scalenotes_save
+final["chordnames"] = all_chordnames_save
+final["midi_to_norm_kv"] = all_midi_to_norm_kv
+final["note_to_norm_kv"] = all_note_to_norm_kv
+print("Dumping to music_data.npz")
 np.savez("music_data.npz", **final)
