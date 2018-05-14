@@ -726,6 +726,8 @@ def GatedMaskedConv2d(list_of_v_inputs, list_of_v_input_dims,
                       residual=True,
                       conditioning_class_input=None,
                       conditioning_num_classes=None,
+                      conditioning_spatial_map=None,
+                      conditioning_spatial_map_kernel_size=None,
                       kernel_size=(3, 3),
                       dilation=[1, 1, 1, 1],
                       strides=[1, 1, 1, 1],
@@ -752,6 +754,7 @@ def GatedMaskedConv2d(list_of_v_inputs, list_of_v_input_dims,
     name_vert2horiz = name + "_gated_masked_vert2horiz"
     name_horiz_res = name + "_gated_masked_conv2d_horiz_res"
     name_embed = name + "_gated_masked_class_embed"
+    name_spatial = name + "_gated_masked_spatial_cond"
     name_m_v = name + "_gated_masked_conv2d_mask_vert"
     name_m_h = name + "_gated_masked_conv2d_mask_horiz"
 
@@ -765,6 +768,19 @@ def GatedMaskedConv2d(list_of_v_inputs, list_of_v_input_dims,
         shp = _shape(c_e)
         if len(shp) != 2:
             raise ValueError("conditioning_embed result should be 2D (input (N, 1)), got {}".format(shp))
+
+    if conditioning_spatial_map != None:
+        shp = _shape(conditioning_spatial_map)
+        if conditioning_spatial_map_kernel_size is None:
+            conditioning_spatial_map_kernel_size = kernel_size
+        spatial_c_e = Conv2d([conditioning_spatial_map], [shp[-1]], 2 * num_feature_maps,
+                             kernel_size=conditioning_spatial_map_kernel_size,
+                             dilation=dilation,
+                             strides=strides,
+                             border_mode="same",
+                             init=init, scale=scale,
+                             biases=biases, bias_offset=bias_offset,
+                             name=name_spatial, random_state=random_state, strict=strict)
 
     if strict is None:
         strict = get_strict_mode_default()
@@ -858,12 +874,24 @@ def GatedMaskedConv2d(list_of_v_inputs, list_of_v_input_dims,
         y = inp[..., num_feature_maps:]
         return Tanh(x) * Sigmoid(y)
 
-    if conditioning_class_input is None:
-        out_v = gate(vert)
-        out = gate(vert2horiz + horiz)
-    else:
-        out_v = gate(vert + c_e[:, None, None, :])
-        out = gate(vert2horiz + horiz + c_e[:, None, None, :])
+
+    v_part = vert
+    h_part = vert2horiz + horiz
+
+    #out_v = gate(vert)
+    #out = gate(vert2horiz + horiz)
+    if conditioning_class_input is not None:
+        v_part += c_e[:, None, None, :]
+        h_part += c_e[:, None, None, :]
+        #out_v = gate(vert + c_e[:, None, None, :])
+        #out = gate(vert2horiz + horiz + c_e[:, None, None, :])
+
+    if conditioning_spatial_map is not None:
+        v_part += spatial_c_e
+        h_part += spatial_c_e
+
+    out_v = gate(v_part)
+    out = gate(h_part)
 
     if residual is True:
         h_r = Conv2d([out], [num_feature_maps], num_feature_maps,
