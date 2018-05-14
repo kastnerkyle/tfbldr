@@ -52,10 +52,11 @@ for iii in range(len(all_notes)):
         if start and s == max_s:
             break
 
-    counter = 1
-    keep = False
+    # start from 1 if keeping rest channel
+    #counter = 1
+    counter = 0
     for octave in ["1", "2", "3", "4", "5"]:
-        for note in scalenotes:
+        for note in reordered_scale:
             nnm = notes_to_midi([[note + octave]])[0][0]
             nn = midi_to_notes([[nnm]])[0][0][:-1]
             note_to_norm_lu[note + octave] = counter
@@ -69,7 +70,9 @@ for iii in range(len(all_notes)):
         midi_m = notes_to_midi(measure)
         for v in range(len(midi_m[0])):
             for t in range(len(midi_m)):
-                im[:, t] |= oh_lu[midi_to_norm_lu[midi_m[t][v]]][..., None]
+                # skip rest items, we will infer them in decoding
+                if midi_m[t][v] != 0:
+                    im[:, t] |= oh_lu[midi_to_norm_lu[midi_m[t][v]]][..., None]
 
         im = im.astype("float32")
         measures_as_images.append(im)
@@ -80,7 +83,6 @@ for iii in range(len(all_notes)):
     all_midi_to_norm_kv.append([(k, v) for k, v in midi_to_norm_lu.items()])
     all_note_to_norm_kv.append([(k, v) for k, v in note_to_norm_lu.items()])
 
-# TODO: PUT CHORDS IN LINE FOR EASY CONDITIONING
 final = {}
 final["measures_as_images"] = all_measures_as_images
 final["scalenotes"] = all_scalenotes_save

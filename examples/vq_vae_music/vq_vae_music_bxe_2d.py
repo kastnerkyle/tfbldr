@@ -19,6 +19,8 @@ d = np.load("music_data_jos.npz")
 flat_images = np.array([mai for amai in copy.deepcopy(d['measures_as_images']) for mai in amai])
 
 image_data = flat_images
+#save_image_array(image_data[:16], "newgt.png")
+
 # save last 1k to validate on
 train_image_data = image_data[:-1000]
 val_image_data = image_data[-1000:]

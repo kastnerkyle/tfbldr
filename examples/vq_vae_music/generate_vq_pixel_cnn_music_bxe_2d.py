@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 import copy
 from tfbldr.datasets import quantized_to_pretty_midi
 
+from decode import decode_measure
 
 parser = argparse.ArgumentParser()
 parser.add_argument('pixelcnn_model', nargs=1, default=None)
@@ -21,8 +22,8 @@ args = parser.parse_args()
 vqvae_model_path = args.vqvae_model[0]
 pixelcnn_model_path = args.pixelcnn_model[0]
 
-num_to_generate = 256
-num_to_plot = 16
+num_to_generate = 1000
+num_each = 64
 random_state = np.random.RandomState(args.seed)
 
 d1 = np.load("music_data_jos.npz")
@@ -35,6 +36,7 @@ d2 = np.load("vq_vae_encoded_music_jos_2d.npz")
 
 # use these to generate
 labels = d2["labels"]
+flat_idx = d2["flat_idx"]
 sample_labels = labels[-1000:]
 
 random_state = np.random.RandomState(2000)
@@ -98,6 +100,7 @@ with tf.Session(config=config) as sess2:
     outs = [vs.x_tilde]
     r = sess2.run(outs, feed_dict=feed)
     x_rec = r[-1]
+
 # binarize the predictions
 x_rec[x_rec > 0.5] = 1.
 x_rec[x_rec <= 0.5] = 0.
@@ -117,6 +120,7 @@ flat_scalenotes = [sn for sg in copy.deepcopy(d2["scalenotes"]) for sn in sg]
 sample_scalenotes = flat_scalenotes[-1000:]
 
 """
+# find some start points
 for n in range(len(sample_labels)):
     lcr_i = label_to_lcr[sample_labels[n, 0]]
     if lcr_i[0] == 0:
@@ -125,96 +129,41 @@ for n in range(len(sample_labels)):
 # 16 44 117 119 143 151 206 242 267 290 308 354 380 410 421 456 517 573 598 622 638 663 676 688 715 725 749 752 820 851 866 922
 
 # start at 16 since that's the start of a chord sequence (could choose any of the numbers above)
-offset = 16
-x_rec_i = x_rec[offset:offset + num_to_plot]
-save_image_array(x_rec_i, "pixel_cnn_gen.png")
+for offset in [16, 44, 308, 421, 517, 752, 866]:
+    print("sampling offset {}".format(offset))
+    x_rec_i = x_rec[offset:offset + num_each]
+    save_image_array(x_rec_i, "pixel_cnn_gen_{}.png".format(offset))
 
-used_scale = sample_scalenotes[offset]
-note_to_norm_lu = {}
-note_to_norm_lu["R"] = 0
-midi_to_norm_lu = {}
-midi_to_norm_lu[0] = 0
-counter = 1
-for octave in ["1", "2", "3", "4", "5"]:
-    for note in used_scale:
-        nnm = notes_to_midi([[note + octave]])[0][0]
-        nn = midi_to_notes([[nnm]])[0][0][:-1]
-        note_to_norm_lu[note + octave] = counter
-        midi_to_norm_lu[nnm] = counter
-        counter += 1
+    sample_flat_idx = flat_idx[-1000:]
 
-norm_to_note_lu = {v: k for k, v in note_to_norm_lu.items()}
-norm_to_midi_lu = {v: k for k, v in midi_to_norm_lu.items()}
+    p = sample_flat_idx[offset:offset + num_each]
+    note_to_norm_kv = d2["note_to_norm_kv"]
+    midi_to_norm_kv = d2["midi_to_norm_kv"]
 
-norm_voices = []
-for n in range(num_to_plot):
-    measure = x_rec[offset + n, :, :, 0]
-    all_up = list(zip(*np.where(measure)))
-    time_ordered = [au for i in range(x_rec.shape[1]) for au in all_up if au[1] == i]
-    events = {}
-    for to in time_ordered:
-        if to[1] not in events:
-            events[to[1]] = []
-        events[to[1]].append(to[0])
+    # EEE more than 1 value maps to 0 in these kv lookups!
+    midi_to_norm_lu = {int(k): int(v) + 1 if k != 0 else 0 for k, v in midi_to_norm_kv[p[0][0]]}
+    norm_to_midi_lu = {v: k for k, v in midi_to_norm_lu.items()}
+    note_to_norm_lu = {k: int(v) + 1 if k != "R" else 0 for k, v in note_to_norm_kv[p[0][0]]}
+    norm_to_note_lu = {int(v): k for k, v in note_to_norm_lu.items()}
 
-    last_non_rest = [0] * 4
-    overall_seq = []
-    for i in range(x_rec.shape[1]):
-        ts = events[i]
-        if len(ts) == 4:
-        else:
-            # figure out voice assignment based on history
-            raise ValueError("NEED TO RETRAIN T_T")
-            from IPython import embed; embed(); raise ValueError()
-            for v in range(4):
-                pass
-        for v in range(4):
-            if last_non_rest[v] == 0:
-                last_non_rest[v] = ts[v]
-            
-    from IPython import embed; embed(); raise ValueError()
+    prev = None
+    decoded_satb_midi = [[], [], [], []]
+    decoded_satb_notes = [[], [], [], []]
+    for n in range(len(x_rec_i)):
+        # 48 x 48 measure in
+        satb = decode_measure(x_rec_i[n][..., 0], prev)
+        prev = [satb[i][-1] for i in range(len(satb))]
+        for i in range(len(satb)):
+            decoded_satb_midi_s = [norm_to_midi_lu[j] if j in norm_to_midi_lu else 0 for j in satb[i]]
+            decoded_satb_note_s = [norm_to_note_lu[j] if j in norm_to_note_lu else 0 for j in satb[i]]
+            decoded_satb_midi[i].extend(decoded_satb_midi_s)
+            decoded_satb_notes[i].extend(decoded_satb_note_s)
 
-# smoothness
-delta_counts = [np.sum(np.abs(np.diff(np.where(x_rec[i][:, :, 0])[0]))) for i in range(len(x_rec))]
-simul = [np.max(np.sum(x_rec[i][:, :, 0], axis=0)) for i in range(len(x_rec))]
-non_boring_indices = [i for i in range(len(x_rec)) if 0 < delta_counts[i] <= 12 and simul[i] <= 1] # includes rest measures, rests arent boring    
-
-x_rec = x_rec[np.array(non_boring_indices)]
-if len(x_rec) < (3 * num_to_plot):
-    raise ValueError("Removed too many boring ones, set num_to_plot lower")
-
-x_rec = x_rec[:3 * num_to_plot]
-x_rec = np.concatenate((x_rec[::3], x_rec[1::3], x_rec[2::3]), axis=-1)
-
-save_image_array(x_rec, "samp_vq_pixel_cnn_music_bxe.png")
-
-ce = copy.deepcopy(d1["centers"])
-# only use bottom 3 voices
-ce = [cei for cei in ce if len(cei) == 4]
-# find all the ones with 0 or 1 rest
-non_rest = [i for i in range(len(ce)) if sum(ce[i] == 0) == 0]
-start_chunks = [i for i in range(len(non_rest) - num_to_plot) if np.max(np.diff(non_rest[i:i+num_to_plot])) == 1]
-random_state.shuffle(start_chunks)
-random_state.shuffle(start_chunks)
-ii = non_rest[start_chunks[0]]
-skeleton = np.array([sk for sk in ce[ii:(ii + num_to_plot)]])
-joined = np.zeros((len(x_rec), x_rec.shape[2], skeleton.shape[-1]))
-joined += skeleton[:, None, :]
-idxs = np.argmax(x_rec, axis=1)
-lu = {k: v for k, v in enumerate(np.arange(-23, 24))}
-res = np.zeros_like(idxs)
-for kk in sorted(lu.keys()):
-    res[idxs == kk] = lu[kk]
-
-# use only top
-res[:, :, 1:] *= 0
-joined[:, :, :res.shape[-1]] += res
-
-joined = joined.reshape(-1, joined.shape[-1])
-joined_voices = [joined[:, c] for c in range(joined.shape[-1])]
-
-quantized_to_pretty_midi([joined_voices],
-                         0.25,
-                         default_quarter_length=440,
-                         voice_params="piano")
+    quantized_to_pretty_midi([decoded_satb_midi],
+                             0.25,
+                             save_dir="samples",
+                             name_tag="sample_{}".format(offset) + "_{}.mid",
+                             default_quarter_length=220,
+                             voice_params="piano")
+    print("saved sample {}".format(offset))
 from IPython import embed; embed(); raise ValueError()

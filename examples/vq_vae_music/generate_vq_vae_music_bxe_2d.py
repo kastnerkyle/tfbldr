@@ -32,10 +32,10 @@ config = tf.ConfigProto(
 d = np.load("music_data_jos.npz")
 flat_images = np.array([mai for amai in copy.deepcopy(d['measures_as_images']) for mai in amai])
 image_data = flat_images
-shuffle_random = np.random.RandomState(112)
-shuffle_random.shuffle(image_data)
-# get images from the held out valid set
 image_data = image_data[-1000:]
+#shuffle_random = np.random.RandomState(112)
+#shuffle_random.shuffle(image_data)
+# get images from the held out valid set
 
 with tf.Session(config=config) as sess:
     saver = tf.train.import_meta_graph(model_path + '.meta')
@@ -64,7 +64,8 @@ with tf.Session(config=config) as sess:
 
     diff = abs(x - x_rec)
     diff[diff > 0] = 1.
-    
+   
+    print("writing out rec.png, orig.png, diff.png")
     save_image_array(x_rec, "rec.png")
     save_image_array(x, "orig.png")
     save_image_array(diff, "diff.png")
