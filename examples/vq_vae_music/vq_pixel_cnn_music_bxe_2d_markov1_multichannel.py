@@ -149,7 +149,7 @@ with tf.Session(graph=g) as sess:
     run_loop(sess,
              loop, train_itr,
              loop, val_itr,
-             n_steps=100 * 1000,
+             n_steps=1000 * 1000,
              n_train_steps_per=5000,
              n_valid_steps_per=1000)
 

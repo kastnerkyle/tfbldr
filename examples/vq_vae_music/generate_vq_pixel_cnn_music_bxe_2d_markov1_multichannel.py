@@ -23,7 +23,7 @@ args = parser.parse_args()
 vqvae_model_path = args.vqvae_model[0]
 pixelcnn_model_path = args.pixelcnn_model[0]
 
-num_to_generate = 100
+num_to_generate = 1000
 num_each = 64
 random_state = np.random.RandomState(args.seed)
 
@@ -40,6 +40,7 @@ d2 = np.load("vq_vae_encoded_music_jos_2d_multichannel.npz")
 
 # use these to generate
 flat_idx = d2["flat_idx"]
+sample_flat_idx = flat_idx[-1000:]
 #labels = d2["labels"]
 #sample_labels = labels[-1000:]
 
@@ -64,9 +65,12 @@ with tf.Session(config=config) as sess1:
 
     sampled_z = []
     c = np.zeros((1, 6, 6)) - 1
-    for sample_steps in range(num_to_generate):
-        print("step {}".format(sample_steps))
+    for sample_step in range(num_to_generate):
+        print("step {}".format(sample_step))
         pix_z = np.zeros((1, 6, 6))
+        if sample_flat_idx[sample_step][1] == 0:
+            # reset it on song boundaries - will be used again when combined labels
+            c = c * 0 - 1
         for i in range(pix_z.shape[1]):
             for j in range(pix_z.shape[2]):
                 print("Sampling v completion pixel {}, {}".format(i, j))
@@ -142,7 +146,7 @@ for n in range(len(sample_labels)):
 # 16 44 117 119 143 151 206 242 267 290 308 354 380 410 421 456 517 573 598 622 638 663 676 688 715 725 749 752 820 851 866 922
 
 # start at 16 since that's the start of a chord sequence (could choose any of the numbers above)
-for offset in [16,]:# 44, 308, 421, 517, 752, 866]:
+for offset in [16, 44, 308, 421, 517, 752, 866]:
     print("sampling offset {}".format(offset))
     x_rec_i = x_rec[offset:offset + num_each]
 
