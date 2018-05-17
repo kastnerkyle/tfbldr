@@ -1315,6 +1315,48 @@ def ribbons_from_piano_roll(piano_roll, ribbon_type, quantized_bin_size,
     from IPython import embed; embed(); raise ValueErro
 
 
+def piano_roll_imlike_to_image_array(piano_roll_as_imarray, quantized_bin_size,
+                                     plot_colors="default",
+                                     background="gray"):
+    """
+    piano_roll_as_imarray should be N H W C
+    """
+    import matplotlib as mpl
+    from matplotlib.colors import colorConverter
+    n_voices = piano_roll_as_imarray.shape[-1]
+    if plot_colors == "default":
+        if background == "black":
+            # style dark_background from matplotlib
+            # https://github.com/matplotlib/matplotlib/blob/master/lib/matplotlib/mpl-data/stylelib/dark_background.mplstyle 
+            colors = ['#8dd3c7', '#feffb3', '#bfbbd9', '#fa8174', '#81b1d2', '#fdb462', '#b3de69', '#bc82bd', '#ccebc4', '#ffed6f']
+            #colors = ["darkred", "steelblue", "forestgreen", "orchid"]
+        elif background == "white" or background == "gray":
+            # seaborn pastel style
+            colors = ['#92C6FF', '#97F0AA', '#FF9F9A', '#D0BBFF', '#FFFEA3', '#B0E0E6']
+            #colors = ["darkred", "steelblue", "forestgreen", "orchid"]
+        else:
+            raise ValueError("No defaults for background color {}".format(background))
+    else:
+        colors = plot_colors
+
+    if n_voices > len(colors):
+        raise ValueError("Need to provide at least as many colors as voices! {} colors but piano_roll_as_imarray.shape[-1] is {}".format(len(colors), piano_roll_as_imarray.shape[-1]))
+    # zip will truncate!
+    cmaps = [mpl.colors.LinearSegmentedColormap.from_list("my_cmap_{}".format(v), [background, c], 256)
+             for c, v in zip(colors, list(range(n_voices)))]
+
+    # one cmap per channel
+    for cmap in cmaps:
+        cmap._init()
+        # lazy way to make zeros of right size
+        alphas = np.linspace(0., 0.6, cmap.N + 3)
+        cmap._lut[:, -1] = alphas
+    # NO ALPHA SUPPORT
+    joined = np.array([cmap(piano_roll_as_imarray[..., i])[..., :-1] for i, cmap in enumerate(cmaps)])
+    as_imarray = joined.sum(axis=0) / float(n_voices)
+    return as_imarray
+
+
 def plot_piano_roll(piano_roll, quantized_bin_size,
                     pitch_bot=1, pitch_top=88,
                     colors=["red", "blue", "green", "purple"],
@@ -1410,13 +1452,12 @@ def plot_piano_roll(piano_roll, quantized_bin_size,
         height = int(height)
         img = np.fromstring(canvas.tostring_rgb(), dtype='uint8').reshape(height, width, 3)
         return img
-        
+
     patch_list = [mpatches.Patch(color=c, alpha=.6, label="Voice {}".format(v)) for c, v in zip(colors, list(range(n_voices)))]
     ax.legend(handles=patch_list, bbox_to_anchor=(0., -.3, 1., .102), loc=1,
               ncol=1, borderaxespad=0.)
     if show:
         plt.show()
-    # ????
     return voice_storage, ribbons_traces
 
 

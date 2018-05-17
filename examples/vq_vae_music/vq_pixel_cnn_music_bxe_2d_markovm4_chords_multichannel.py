@@ -22,11 +22,11 @@ assert len(flat_idx) == len(image_data)
 conditions = []
 for ii in range(len(image_data)):
     _, measure_i = flat_idx[ii]
-    if measure_i == 0:
-        # special conditioning of 0 for init
+    if measure_i <= 1:
+        # special conditioning of -1 for init
         c = 0. * image_data[ii]
     else:
-        c = image_data[ii - 1]
+        c = image_data[ii - 2]
     conditions.append(c)
 conditions = np.array(conditions)
 
@@ -37,20 +37,18 @@ train_conditions = conditions[:-1000]
 val_conditions = conditions[-1000:]
 
 #nested_chordnames = d["chordnames"]
-#labels = d["labels"]
 
-#train_labels = labels[:-1000]
-#valid_labels = labels[-1000:]
+labels = d["labels"]
+train_labels = labels[:-1000]
+val_labels = labels[-1000:]
 
-#n_labels = len(set(list(np.unique(train_labels)) + list(np.unique(valid_labels))))
-#print("n_labels {}".format(n_labels))
+n_labels = len(set(list(np.unique(train_labels)) + list(np.unique(val_labels))))
+print("n_labels {}".format(n_labels))
 
 train_itr_random_state = np.random.RandomState(1122)
 val_itr_random_state = np.random.RandomState(1)
-#train_itr = list_iterator([train_image_data, train_labels], 50, random_state=train_itr_random_state)
-#val_itr = list_iterator([val_image_data, valid_labels], 50, random_state=val_itr_random_state)
-train_itr = list_iterator([train_image_data, train_conditions], 50, random_state=train_itr_random_state)
-val_itr = list_iterator([val_image_data, val_conditions], 50, random_state=val_itr_random_state)
+train_itr = list_iterator([train_image_data, train_labels, train_conditions], 50, random_state=train_itr_random_state)
+val_itr = list_iterator([val_image_data, val_labels, val_conditions], 50, random_state=val_itr_random_state)
 
 random_state = np.random.RandomState(1999)
 
@@ -60,14 +58,14 @@ kernel_size1 = (3, 3)
 n_channels = 64
 n_layers = 15
 
-def create_pixel_cnn(inp, cond):
+def create_pixel_cnn(inp, lbl, cond):
     e_inp, emb = Embedding(inp, 256, n_channels, random_state=random_state, name="inp_emb")
     c_inp, c_emb = Embedding(cond, 256, n_channels, random_state=random_state, name="cond_emb")
     l1_v, l1_h = GatedMaskedConv2d([e_inp], [n_channels], [e_inp], [n_channels],
                                    n_channels,
                                    residual=False,
-                                   #conditioning_class_input=lbl,
-                                   #conditioning_num_classes=n_labels,
+                                   conditioning_class_input=lbl,
+                                   conditioning_num_classes=n_labels,
                                    conditioning_spatial_map=c_inp,
                                    kernel_size=kernel_size0, name="pcnn0",
                                    mask_type="img_A",
@@ -77,8 +75,8 @@ def create_pixel_cnn(inp, cond):
     for i in range(n_layers - 1):
         t_v, t_h = GatedMaskedConv2d([o_v], [n_channels], [o_h], [n_channels],
                                      n_channels,
-                                     #conditioning_class_input=lbl,
-                                     #conditioning_num_classes=n_labels,
+                                     conditioning_class_input=lbl,
+                                     conditioning_num_classes=n_labels,
                                      conditioning_spatial_map=c_inp,
                                      kernel_size=kernel_size1, name="pcnn{}".format(i + 1),
                                      mask_type="img_B",
@@ -101,8 +99,9 @@ def create_graph():
     graph = tf.Graph()
     with graph.as_default():
         images = tf.placeholder(tf.float32, shape=[None, 6, 6, 1])
+        labels = tf.placeholder(tf.float32, shape=[None, 1])
         conds = tf.placeholder(tf.float32, shape=[None, 6, 6, 1])
-        x_tilde = create_pixel_cnn(images, conds)
+        x_tilde = create_pixel_cnn(images, labels, conds)
         loss = tf.reduce_mean(CategoricalCrossEntropyLinearIndexCost(x_tilde, images))
         #loss = tf.reduce_mean(BernoulliCrossEntropyCost(x_tilde, images))
         #loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=x_tilde, labels=images))
@@ -117,6 +116,7 @@ def create_graph():
         train_step = optimizer.apply_gradients(j)
 
     things_names = ["images",
+                    "labels",
                     "conds",
                     "x_tilde",
                     "loss",
@@ -130,9 +130,10 @@ def create_graph():
 g, vs = create_graph()
 
 def loop(sess, itr, extras, stateful_args):
-    x, c = itr.next_batch()
+    x, y, c = itr.next_batch()
     if extras["train"]:
         feed = {vs.images: x,
+                vs.labels: y,
                 vs.conds: c}
         outs = [vs.loss, vs.train_step]
         r = sess.run(outs, feed_dict=feed)
@@ -140,6 +141,7 @@ def loop(sess, itr, extras, stateful_args):
         step = r[1]
     else:
         feed = {vs.images: x,
+                vs.labels: y,
                 vs.conds: c}
         outs = [vs.loss]
         r = sess.run(outs, feed_dict=feed)
@@ -151,7 +153,7 @@ with tf.Session(graph=g) as sess:
              loop, train_itr,
              loop, val_itr,
              n_steps=100 * 1000,
-             n_train_steps_per=5000,
+             n_train_steps_per=10000,
              n_valid_steps_per=1000)
 
 print("training done")

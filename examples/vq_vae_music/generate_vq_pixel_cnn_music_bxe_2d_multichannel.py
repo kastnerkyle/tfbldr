@@ -1,6 +1,7 @@
 import argparse
 import tensorflow as tf
 import numpy as np
+from tfbldr.datasets import piano_roll_imlike_to_image_array
 from tfbldr.datasets import save_image_array
 from tfbldr.datasets import notes_to_midi
 from tfbldr.datasets import midi_to_notes
@@ -19,6 +20,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('pixelcnn_model', nargs=1, default=None)
 parser.add_argument('vqvae_model', nargs=1, default=None)
 parser.add_argument('--seed', dest='seed', type=int, default=1999)
+parser.add_argument('--temp', dest='temp', type=float, default=1.)
 args = parser.parse_args()
 vqvae_model_path = args.vqvae_model[0]
 pixelcnn_model_path = args.pixelcnn_model[0]
@@ -32,7 +34,7 @@ flat_images = np.array([mai for amai in copy.deepcopy(d1['measures_as_images']) 
 image_data = flat_images
 
 # times 0 to ensure NO information leakage
-sample_image_data = 0. * image_data 
+sample_image_data = 0. * image_data
 # shuffle it just because
 random_state.shuffle(sample_image_data)
 
@@ -43,9 +45,9 @@ labels = d2["labels"]
 flat_idx = d2["flat_idx"]
 sample_labels = labels[-1000:]
 
-def sample_gumbel(logits, temperature=1.):
+def sample_gumbel(logits, temperature=args.temp):
     noise = random_state.uniform(1E-5, 1. - 1E-5, np.shape(logits))
-    return np.argmax(logits / float(temperature) - np.log(-np.log(noise)), axis=-1)
+    return np.argmax((logits - logits.max() - 1) / float(temperature) - np.log(-np.log(noise)), axis=-1)
 
 config = tf.ConfigProto(
     device_count={'GPU': 0}
@@ -136,13 +138,13 @@ for offset in [16, 44, 308, 421, 517, 752, 866]:
     print("sampling offset {}".format(offset))
     x_rec_i = x_rec[offset:offset + num_each]
 
-    x_ts = x_rec_i.sum(axis=-1)[..., None]
-    x_ts[x_ts > 0.5] = 1.
-    x_ts[x_ts <= 0.5] = 0.
+    x_ts = piano_roll_imlike_to_image_array(x_rec_i, 0.25)
+    # cut off zero padding on the vertical axis
+    x_ts = x_ts[:, :35]
 
     if not os.path.exists("samples"):
         os.mkdir("samples")
-    save_image_array(x_ts, "samples/multichannel_pixel_cnn_gen_{}_seed_{}.png".format(offset, args.seed))
+    save_image_array(x_ts, "samples/multichannel_pixel_cnn_gen_{}_seed_{}_temp_{}.png".format(offset, args.seed, args.temp))
 
     sample_flat_idx = flat_idx[-1000:]
 
@@ -190,7 +192,7 @@ for offset in [16, 44, 308, 421, 517, 752, 866]:
     quantized_to_pretty_midi([decoded_satb_midi],
                              0.25,
                              save_dir="samples",
-                             name_tag="multichannel_sample_{}_seed_{}".format(offset, args.seed) + "_{}.mid",
+                             name_tag="multichannel_sample_{}_seed_{}_temp_{}".format(offset, args.seed, args.temp) + "_{}.mid",
                              default_quarter_length=220,
                              voice_params="woodwinds")
     print("saved sample {}".format(offset))

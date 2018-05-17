@@ -34,7 +34,7 @@ flat_images = np.array([mai for amai in copy.deepcopy(d1['measures_as_images']) 
 image_data = flat_images
 
 # times 0 to ensure NO information leakage
-sample_image_data = 0. * image_data 
+sample_image_data = 0. * image_data
 # shuffle it just because
 random_state.shuffle(sample_image_data)
 
@@ -43,12 +43,12 @@ d2 = np.load("vq_vae_encoded_music_jos_2d_multichannel.npz")
 # use these to generate
 flat_idx = d2["flat_idx"]
 sample_flat_idx = flat_idx[-1000:]
-#labels = d2["labels"]
-#sample_labels = labels[-1000:]
+labels = d2["labels"]
+sample_labels = labels[-1000:]
 
 def sample_gumbel(logits, temperature=args.temp):
     noise = random_state.uniform(1E-5, 1. - 1E-5, np.shape(logits))
-    return np.argmax((logits - logits.max() - 1) / float(temperature) - np.log(-np.log(noise)), axis=-1)
+    return np.argmax((logits - np.max(logits) - 1) / float(temperature) - np.log(-np.log(noise)), axis=-1)
 
 config = tf.ConfigProto(
     device_count={'GPU': 0}
@@ -59,25 +59,27 @@ with tf.Session(config=config) as sess1:
     saver.restore(sess1, pixelcnn_model_path)
     fields = ['images',
               'conds',
+              'labels',
               'x_tilde']
     vs = namedtuple('Params', fields)(
         *[tf.get_collection(name)[0] for name in fields]
     )
-    #y = sample_labels[:num_to_generate]
 
+    y = sample_labels[:num_to_generate]
     sampled_z = []
     c = np.zeros((1, 6, 6))
     for sample_step in range(num_to_generate):
         print("step {}".format(sample_step))
         pix_z = np.zeros((1, 6, 6))
-        if sample_flat_idx[sample_step][1] == 0:
+        if sample_flat_idx[sample_step][1] <= 1:
             # reset it on song boundaries - will be used again when combined labels
             c = c * 0
         for i in range(pix_z.shape[1]):
             for j in range(pix_z.shape[2]):
                 print("Sampling v completion pixel {}, {}".format(i, j))
                 feed = {vs.images: pix_z[..., None],
-                        vs.conds: c[..., None]}
+                        vs.conds: c[..., None],
+                        vs.labels: y[sample_step][None]}
                 outs = [vs.x_tilde]
                 r = sess1.run(outs, feed_dict=feed)
                 x_rec = sample_gumbel(r[-1])
@@ -85,7 +87,8 @@ with tf.Session(config=config) as sess1:
                 for k in range(pix_z.shape[0]):
                     pix_z[k, i, j] = float(x_rec[k, i, j])
         sampled_z.append(pix_z)
-        c = pix_z
+        if sample_step >= 2:
+            c = sampled_z[-2]
 
 sess1.close()
 tf.reset_default_graph()
@@ -158,7 +161,7 @@ for offset in [16, 44, 308, 421, 517, 752, 866]:
 
     if not os.path.exists("samples"):
         os.mkdir("samples")
-    save_image_array(x_ts, "samples/multichannel_pixel_cnn_markov1_gen_{}_seed_{}_temp_{}.png".format(offset, args.seed, args.temp))
+    save_image_array(x_ts, "samples/multichannel_pixel_cnn_markovm2_chords_gen_{}_seed_{}_temp_{}.png".format(offset, args.seed, args.temp))
 
     sample_flat_idx = flat_idx[-1000:]
 
@@ -206,7 +209,7 @@ for offset in [16, 44, 308, 421, 517, 752, 866]:
     quantized_to_pretty_midi([decoded_satb_midi],
                              0.25,
                              save_dir="samples",
-                             name_tag="multichannel_markov1_sample_{}_seed_{}_temp_{}".format(offset, args.seed, args.temp) + "_{}.mid",
+                             name_tag="multichannel_markovm2_chords_sample_{}_seed_{}_temp_{}".format(offset, args.seed, args.temp) + "_{}.mid",
                              default_quarter_length=220,
                              voice_params="woodwinds")
     print("saved sample {}".format(offset))
