@@ -165,6 +165,10 @@ for fnpz in sorted(os.listdir(basedir)):
         pr_i = prs[n]
         pd_i = pds[n]
         chords_names_i = loaded_chords_names[n]
+        if len(set([lcn for lcn in loaded_chords_names[n]])) != 1:
+            print("got multiple chords")
+            from IPython import embed; embed(); raise ValueError()
+
         if pr_i.shape[-1] != 4:
             #print("3 voices, skip for now")
             continue

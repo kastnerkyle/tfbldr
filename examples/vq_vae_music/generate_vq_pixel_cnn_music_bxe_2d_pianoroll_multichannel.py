@@ -44,7 +44,9 @@ d2 = np.load("vq_vae_encoded_music_jos_2d_pianoroll_multichannel.npz")
 # use these to generate
 labels = d2["labels"]
 flat_idx = d2["flat_idx"]
+labelnames = d2["labelnames"]
 sample_labels = labels[-1000:]
+sample_labelnames = labelnames[-1000:]
 
 full_chords_kv = d2["full_chords_kv"]
 label_to_lcr_kv = d2["label_to_lcr_kv"]
@@ -60,38 +62,15 @@ full_chords_lu_inv = {v: k for k, v in full_chords_lu.items()}
 basic_chords_lu = {k: int(v) for k, v in basic_chords_kv}
 basic_chords_lu_inv = {v: k for k, v in basic_chords_lu.items()}
 
-def cname(lcr):
-    return basic_chords_lu_inv[lcr[0]], full_chords_lu_inv[lcr[1]], basic_chords_lu_inv[lcr[2]]
-
 if args.chords != None:
+    raise ValueError("")
     chordseq = args.chords.split(",")
     if len(chordseq) < 3:
         raise ValueError("Provided chords length < 3, need at least 3 chords separated by spaces! Example: --chords=I7,IV7,V7,I7 . Got {}".format(args.chords))
-    chords_grouped = []
-    grouped = []
-    for i in range(len(chordseq) - 1):
-        if i == 0:
-            l =  chordseq[0]
-        else:
-            l = chordseq[i - 1]
-        l =  "".join([cs for cs in l if not cs.isdigit()])
-        c = chordseq[i]
-
-        if i == (len(chordseq) - 1):
-            r = chordseq[i]
-        else:
-            r = chordseq[i + 1]
-        r =  "".join([cs for cs in r if not cs.isdigit()])
-
-        lcr = (basic_chords_lu[l], full_chords_lu[c], basic_chords_lu[r])
-        grouped.append(lcr)
-        chords_grouped.append((l, c, r))
-    # attempt to parse them all
-    [cname(g) for g in grouped]
-    # [cname(label_to_lcr[labels[i, 0]]) for i in range(len(labels))]
-    #clbl = [lcr_to_label[g] for g in grouped]
-    from IPython import embed; embed(); raise ValueError()
-
+    ch =  [cs for cs in args.chords.split(",")]
+    clbl = [full_chords_lu[cs] for cs in ch]
+    stretched = clbl * (num_to_generate // len(clbl) + 1)
+    sample_labels = np.array(stretched[:len(sample_labels)])[:, None]
 
 def sample_gumbel(logits, temperature=args.temp):
     noise = random_state.uniform(1E-5, 1. - 1E-5, np.shape(logits))
@@ -158,15 +137,6 @@ with tf.Session(config=config) as sess2:
 x_rec[x_rec > 0.5] = 1.
 x_rec[x_rec <= 0.5] = 0.
 
-full_chords_kv = d2["full_chords_kv"]
-label_to_lcr_kv = d2["label_to_lcr_kv"]
-basic_chords_kv = d2["basic_chords_kv"]
-full_chords_kv = d2["full_chords_kv"]
-
-label_to_lcr = {int(k): tuple([int(iv) for iv in v.split(",")]) for k, v in label_to_lcr_kv}
-full_chords_lu = {k: int(v) for k, v in full_chords_kv}
-basic_chords_lu = {k: int(v) for k, v in full_chords_kv}
-
 """
 # find some start points
 for n in range(len(sample_labels)):
@@ -186,7 +156,11 @@ for offset in [16, 44, 308, 421, 517, 752, 866]:
 
     if not os.path.exists("samples"):
         os.mkdir("samples")
-    save_image_array(x_ts, "samples/pianoroll_multichannel_pixel_cnn_gen_{}_seed_{}_temp_{}.png".format(offset, args.seed, args.temp))
+
+    if args.chords == None:
+        save_image_array(x_ts, "samples/pianoroll_multichannel_pixel_cnn_gen_{}_seed_{}_temp_{}.png".format(offset, args.seed, args.temp))
+    else:
+        save_image_array(x_ts, "samples/pianoroll_multichannel_pixel_cnn_gen_{}_seed_{}_temp_{}.png".format(args.chords, args.seed, args.temp))
 
     sample_flat_idx = flat_idx[-1000:]
 
@@ -220,10 +194,14 @@ for offset in [16, 44, 308, 421, 517, 752, 866]:
             satb_midi[i].extend(satb[i])
             satb_notes[i].extend(midi_to_notes([satb[i]])[0])
 
+    if args.chords == None:
+        name_tag="pianoroll_multichannel_sample_{}_seed_{}_temp_{}".format(offset, args.seed, args.temp) + "_{}.mid"
+    else:
+        name_tag="pianoroll_multichannel_sample_{}_seed_{}_temp_{}".format(args.chords, args.seed, args.temp) + "_{}.mid"
     quantized_to_pretty_midi([satb_midi],
                              0.25,
                              save_dir="samples",
-                             name_tag="pianoroll_multichannel_sample_{}_seed_{}_temp_{}".format(offset, args.seed, args.temp) + "_{}.mid",
+                             name_tag=name_tag,
                              default_quarter_length=220,
                              voice_params="woodwinds")
     print("saved sample {}".format(offset))
