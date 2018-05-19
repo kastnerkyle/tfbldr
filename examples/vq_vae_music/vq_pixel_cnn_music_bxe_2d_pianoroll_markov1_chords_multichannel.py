@@ -39,6 +39,8 @@ val_conditions = conditions[-1000:]
 #nested_chordnames = d["chordnames"]
 
 labels = d["labels"]
+labelnames = d["labelnames"]
+
 train_labels = labels[:-1000]
 val_labels = labels[-1000:]
 

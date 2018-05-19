@@ -44,7 +44,19 @@ d2 = np.load("vq_vae_encoded_music_jos_2d_pianoroll_multichannel.npz")
 flat_idx = d2["flat_idx"]
 sample_flat_idx = flat_idx[-1000:]
 labels = d2["labels"]
+labelnames = d2["labelnames"]
 sample_labels = labels[-1000:]
+sample_labelnames = labelnames[-1000:]
+
+full_chords_kv = d2["full_chords_kv"]
+label_to_lcr_kv = d2["label_to_lcr_kv"]
+basic_chords_kv = d2["basic_chords_kv"]
+full_chords_kv = d2["full_chords_kv"]
+
+label_to_lcr = {int(k): tuple([int(iv) for iv in v.split(",")]) for k, v in label_to_lcr_kv}
+full_chords_lu = {k: int(v) for k, v in full_chords_kv}
+basic_chords_lu = {k: int(v) for k, v in basic_chords_kv}
+
 
 def sample_gumbel(logits, temperature=args.temp):
     noise = random_state.uniform(1E-5, 1. - 1E-5, np.shape(logits))
@@ -126,15 +138,6 @@ with tf.Session(config=config) as sess2:
 x_rec[x_rec > 0.5] = 1.
 x_rec[x_rec <= 0.5] = 0.
 
-full_chords_kv = d2["full_chords_kv"]
-label_to_lcr_kv = d2["label_to_lcr_kv"]
-basic_chords_kv = d2["basic_chords_kv"]
-full_chords_kv = d2["full_chords_kv"]
-
-label_to_lcr = {int(k): tuple([int(iv) for iv in v.split(",")]) for k, v in label_to_lcr_kv}
-full_chords_lu = {k: int(v) for k, v in full_chords_kv}
-basic_chords_lu = {k: int(v) for k, v in full_chords_kv}
-
 """
 # find some start points
 for n in range(len(sample_labels)):
@@ -148,6 +151,7 @@ for n in range(len(sample_labels)):
 for offset in [16, 44, 308, 421, 517, 752, 866]:
     print("sampling offset {}".format(offset))
     x_rec_i = x_rec[offset:offset + num_each]
+    these_labelnames = sample_labelnames[offset:offset + num_each]
 
     x_ts = piano_roll_imlike_to_image_array(x_rec_i, 0.25)
 
@@ -189,6 +193,7 @@ for offset in [16, 44, 308, 421, 517, 752, 866]:
             satb_midi[i].extend(satb[i])
             satb_notes[i].extend(midi_to_notes([satb[i]])[0])
 
+    np.savez("samples/markov1_chords_sample_{}.npz".format(offset), pr=x_rec_i, midi=satb_midi, notes=satb_notes, labelnames=these_labelnames)
     quantized_to_pretty_midi([satb_midi],
                              0.25,
                              save_dir="samples",

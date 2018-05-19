@@ -150,6 +150,7 @@ for n in range(len(sample_labels)):
 for offset in [16, 44, 308, 421, 517, 752, 866]:
     print("sampling offset {}".format(offset))
     x_rec_i = x_rec[offset:offset + num_each]
+    these_labelnames = sample_labelnames[offset:offset + num_each]
 
     x_ts = piano_roll_imlike_to_image_array(x_rec_i, 0.25)
     # cut off zero padding on the vertical axis
@@ -198,6 +199,8 @@ for offset in [16, 44, 308, 421, 517, 752, 866]:
         name_tag="pianoroll_multichannel_sample_{}_seed_{}_temp_{}".format(offset, args.seed, args.temp) + "_{}.mid"
     else:
         name_tag="pianoroll_multichannel_sample_{}_seed_{}_temp_{}".format(args.chords, args.seed, args.temp) + "_{}.mid"
+
+    np.savez("samples/sample_{}_seed_{}.npz".format(offset, args.seed), pr=x_rec_i, midi=satb_midi, notes=satb_notes, labelnames=these_labelnames)
     quantized_to_pretty_midi([satb_midi],
                              0.25,
                              save_dir="samples",

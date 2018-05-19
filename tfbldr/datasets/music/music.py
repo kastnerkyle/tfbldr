@@ -772,16 +772,9 @@ def pitches_and_durations_to_pretty_midi(pitches, durations,
             print("Unable to write file {} due to mido error".format(sv))
 
 
-def quantized_to_pretty_midi(quantized,
-                             quantized_bin_size,
-                             save_dir="samples",
-                             name_tag="sample_{}.mid",
-                             add_to_name=0,
-                             lower_pitch_limit=12,
-                             list_of_quarter_length=None,
-                             max_hold_bars=1,
-                             default_quarter_length=47,
-                             voice_params="woodwinds"):
+def quantized_to_pitch_duration(quantized,
+                                quantized_bin_size,
+                                max_hold_bars=1):
     """
     takes in list of list of list, or list of array with axis 0 time, axis 1 voice_number (S,A,T,B)
     outer list is over samples, middle list is over voice, inner list is over time
@@ -817,7 +810,6 @@ def quantized_to_pretty_midi(quantized,
             voices = quantized[ss].shape[1]
             qq = quantized[ss].T
 
-
         for i in range(voices):
             q = qq[i]
             pitch_i = [0]
@@ -825,7 +817,7 @@ def quantized_to_pretty_midi(quantized,
             cur = 0
             count = 0
             for qi in q:
-                if qi != cur:# or count > max_hold:
+                if qi != cur or count > max_hold:
                     pitch_i.append(qi)
                     quarter_count = quantized_bin_size * (count + 1)
                     dur_i.append(quarter_count)
@@ -839,6 +831,25 @@ def quantized_to_pretty_midi(quantized,
             durations.append(dur_i)
         all_pitches.append(pitches)
         all_durations.append(durations)
+    return all_pitches, all_durations
+
+
+def quantized_to_pretty_midi(quantized,
+                             quantized_bin_size,
+                             save_dir="samples",
+                             name_tag="sample_{}.mid",
+                             add_to_name=0,
+                             lower_pitch_limit=12,
+                             list_of_quarter_length=None,
+                             max_hold_bars=1,
+                             default_quarter_length=47,
+                             voice_params="woodwinds"):
+    """
+    takes in list of list of list, or list of array with axis 0 time, axis 1 voice_number (S,A,T,B)
+    outer list is over samples, middle list is over voice, inner list is over time
+    """
+    all_pitches, all_durations = quantized_to_pitch_duration(quantized, quantized_bin_size,
+                                                             max_hold_bars=max_hold_bars)
     pitches_and_durations_to_pretty_midi(all_pitches, all_durations,
                                          save_dir=save_dir,
                                          name_tag=name_tag,
@@ -1167,7 +1178,10 @@ def map_midi_durations_to_lilypond(durations, extras=None):
                     ff(4.): "1",
                     ff(3.): "2.",
                     ff(2.): "2",
+                    ff(1.5): "4.",
+                    ff(1.25): "4~{}16",
                     ff(1.): "4",
+                    ff(.75): "8.",
                     ff(.5): "8",
                     ff(.25): "16",
                     ff(.125): "32",
@@ -1207,7 +1221,13 @@ def pitches_and_durations_to_lilypond_notation(pitches, durations, extras=None,
     lilycomb = []
     for lp, ld in zip(lilypitches, lilydurs):
         assert len(lp) == len(ld)
-        lc = [lpi + ldi for lpi, ldi in zip(lp, ld)]
+        lc = []
+        for lpi, ldi in zip(lp, ld):
+            if "~" in ldi:
+                from IPython import embed; embed(); raise ValueError()
+                lc.append(lpi + ldi.format(lpi))
+            else:
+                lc.append(lpi + ldi)
         lilycomb.append(lc)
     return lilycomb
 
@@ -1233,34 +1253,38 @@ def plot_pitches_and_durations(pitches, durations,
     if not os.path.exists(save_dir):
         os.mkdir(save_dir)
     for n, (pitches, durations) in enumerate(zip(pitches, durations)):
+        """
         try:
-            # map midi pitches to lilypond ones... oy
-            voices = pitches_and_durations_to_lilypond_notation(pitches, durations, extras, key_signatures=key_signatures)
-            #plot_lilypond([voices[1]])
-            #plot_lilypond([voices[0]], [voices[-1]])
-            #plot_lilypond([voices[0]], [voices[-1]], own_staves=True)
-            # TODO: fix own_staves=False issues with conflicting time/key signatures
-            # raise an error
-            # down the line, fix accidentals on case by case basis :|
-            # add options for chord notations, and intervals for final analysis
-            # add grey notes (all possibles) as well to visualize the decoding?
-            this_dir = os.getcwd()
-            #full_fpath = save_dir + os.sep + name_tag.format(n)
-            local_fpath = name_tag.format(n)
-            os.chdir(save_dir)
-            # do it this way because lilypond uses the local dir by default...
-            plot_lilypond(voices, own_staves=True,
-                          fpath=local_fpath,
-                          make_pdf=make_pdf,
-                          time_signatures=time_signatures,
-                          key_signatures=key_signatures,
-                          chord_annotations=chord_annotations,
-                          interval_figures=interval_figures,
-                          interval_durations=interval_durations,
-                          use_clefs=use_clefs)
-            os.chdir(this_dir)
+        """
+        # map midi pitches to lilypond ones... oy
+        voices = pitches_and_durations_to_lilypond_notation(pitches, durations, extras, key_signatures=key_signatures)
+        #plot_lilypond([voices[1]])
+        #plot_lilypond([voices[0]], [voices[-1]])
+        #plot_lilypond([voices[0]], [voices[-1]], own_staves=True)
+        # TODO: fix own_staves=False issues with conflicting time/key signatures
+        # raise an error
+        # down the line, fix accidentals on case by case basis :|
+        # add options for chord notations, and intervals for final analysis
+        # add grey notes (all possibles) as well to visualize the decoding?
+        this_dir = os.getcwd()
+        #full_fpath = save_dir + os.sep + name_tag.format(n)
+        local_fpath = name_tag.format(n)
+        os.chdir(save_dir)
+        # do it this way because lilypond uses the local dir by default...
+        plot_lilypond(voices, own_staves=True,
+                      fpath=local_fpath,
+                      make_pdf=make_pdf,
+                      time_signatures=time_signatures,
+                      key_signatures=key_signatures,
+                      chord_annotations=chord_annotations,
+                      interval_figures=interval_figures,
+                      interval_durations=interval_durations,
+                      use_clefs=use_clefs)
+        os.chdir(this_dir)
+        """
         except:
             print("Error writing index {}, continuing...".format(n))
+        """
 
 
 def music21_to_pitch_duration(p, verbose=False):
@@ -1317,7 +1341,7 @@ def ribbons_from_piano_roll(piano_roll, ribbon_type, quantized_bin_size,
 
 def piano_roll_imlike_to_image_array(piano_roll_as_imarray, quantized_bin_size,
                                      plot_colors="default",
-                                     background="gray"):
+                                     background="white"):
     """
     piano_roll_as_imarray should be N H W C
     """
@@ -1330,7 +1354,12 @@ def piano_roll_imlike_to_image_array(piano_roll_as_imarray, quantized_bin_size,
             # https://github.com/matplotlib/matplotlib/blob/master/lib/matplotlib/mpl-data/stylelib/dark_background.mplstyle 
             colors = ['#8dd3c7', '#feffb3', '#bfbbd9', '#fa8174', '#81b1d2', '#fdb462', '#b3de69', '#bc82bd', '#ccebc4', '#ffed6f']
             #colors = ["darkred", "steelblue", "forestgreen", "orchid"]
-        elif background == "white" or background == "gray":
+        elif background == "white":
+            # https://www.sessions.edu/color-calculator-results/?colors=dea85b,5c4db0,b34aa3,8c963d
+            #colors = ['#5C4DB0', '#DEA85B', '#B34AA3', '#8C963D']
+            # https://www.sessions.edu/color-calculator-results/?colors=3b3a9c,cf9022,83a82c,802380
+            colors = ['#3B3A9C', '#CF9022', '#83A82C', '#802380']
+        elif background == "gray":
             # seaborn pastel style
             colors = ['#92C6FF', '#97F0AA', '#FF9F9A', '#D0BBFF', '#FFFEA3', '#B0E0E6']
             #colors = ["darkred", "steelblue", "forestgreen", "orchid"]
@@ -1349,7 +1378,7 @@ def piano_roll_imlike_to_image_array(piano_roll_as_imarray, quantized_bin_size,
     for cmap in cmaps:
         cmap._init()
         # lazy way to make zeros of right size
-        alphas = np.linspace(0., 0.6, cmap.N + 3)
+        alphas = np.linspace(0., 1., cmap.N + 3)
         cmap._lut[:, -1] = alphas
     # NO ALPHA SUPPORT
     joined = np.array([cmap(piano_roll_as_imarray[..., i])[..., :-1] for i, cmap in enumerate(cmaps)])

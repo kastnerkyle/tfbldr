@@ -46,6 +46,15 @@ sample_flat_idx = flat_idx[-1000:]
 #labels = d2["labels"]
 #sample_labels = labels[-1000:]
 
+full_chords_kv = d2["full_chords_kv"]
+label_to_lcr_kv = d2["label_to_lcr_kv"]
+basic_chords_kv = d2["basic_chords_kv"]
+full_chords_kv = d2["full_chords_kv"]
+
+label_to_lcr = {int(k): tuple([int(iv) for iv in v.split(",")]) for k, v in label_to_lcr_kv}
+full_chords_lu = {k: int(v) for k, v in full_chords_kv}
+basic_chords_lu = {k: int(v) for k, v in full_chords_kv}
+
 def sample_gumbel(logits, temperature=args.temp):
     noise = random_state.uniform(1E-5, 1. - 1E-5, np.shape(logits))
     return np.argmax((logits - logits.max() - 1) / float(temperature) - np.log(-np.log(noise)), axis=-1)
@@ -123,15 +132,6 @@ with tf.Session(config=config) as sess2:
 # binarize the predictions
 x_rec[x_rec > 0.5] = 1.
 x_rec[x_rec <= 0.5] = 0.
-
-full_chords_kv = d2["full_chords_kv"]
-label_to_lcr_kv = d2["label_to_lcr_kv"]
-basic_chords_kv = d2["basic_chords_kv"]
-full_chords_kv = d2["full_chords_kv"]
-
-label_to_lcr = {int(k): tuple([int(iv) for iv in v.split(",")]) for k, v in label_to_lcr_kv}
-full_chords_lu = {k: int(v) for k, v in full_chords_kv}
-basic_chords_lu = {k: int(v) for k, v in full_chords_kv}
 
 """
 # find some start points

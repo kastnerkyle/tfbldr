@@ -22,4 +22,5 @@ from .music import plot_piano_roll
 from .music import piano_roll_imlike_to_image_array
 from .music import midi_to_notes
 from .music import notes_to_midi
+from .music import quantized_to_pitch_duration
 from .plotters import save_image_array
