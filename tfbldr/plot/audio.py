@@ -1,4 +1,4 @@
-from ..datasets import stft
+from ..datasets.audio import stft
 from .plot import get_viridis
 import numpy as np
 

@@ -21,13 +21,14 @@ def notes_to_midi(notes):
     # letters should be all caps!
     # C4 = C in 4th octave
     # 0 = rest
-    # 12 = C0
-    # 24 = C1
-    # 36 = C2
-    # 48 = C3
-    # 60 = C4
-    # 72 = C5
-    # 84 = C6
+    # 1 = hold
+    # 13 = C0
+    # 25 = C1
+    # 37 = C2
+    # 49 = C3
+    # 61 = C4
+    # 73 = C5
+    # 85 = C6
     base = {"C": 0,
             "D": 2,
             "E": 4,

@@ -95,7 +95,7 @@ def execute(cmd, shell=False):
         raise subprocess.CalledProcessError(return_code, cmd)
 
 
-def pe(cmd, shell=False, verbose=True):
+def pe(cmd, shell=True, verbose=True):
     """
     Print and execute command on system
     """
@@ -350,11 +350,40 @@ def fetch_iamondb():
     return dataset_storage
 
 
+def fetch_ljspeech(path="/Tmp/kastner/lj_speech/LJSpeech-1.0/"):
+    if not path.endswith(os.sep):
+        path = path + os.sep
+
+    if not os.path.exists(path + "wavs"):
+        e = IOError("No wav files found in {}, under {}".format(path, path + "wavs"), None, path + "wavs")
+        raise e
+    if not os.path.exists(path + "txts"):
+        e = IOError("No txt files found in {}, under {}".format(path, path + "txts"), None, path + "txts")
+        raise e
+    if not os.path.exists(path + "phones"):
+        e = IOError("No phone files found in {}, under {}".format(path, path + "phones"), None, path + "phones")
+        raise e
+    if not os.path.exists(path + "gentle_json"):
+        e = IOError("No phone files found in {}, under {}".format(path, path + "phones"), None, path + "phones")
+        raise e
+    wavfiles = [path + "wavs/" + ff for ff in os.listdir(path + "wavs/")]
+    txtfiles = [path + "txts/" + ff for ff in os.listdir(path + "txts/")]
+    phonefiles = [path + "phones/" + ff for ff in os.listdir(path + "phones/")]
+    jsonfiles = [path + "gentle_json/" + ff for ff in os.listdir(path + "gentle_json/")]
+    d = {}
+    d["wavfiles"] = wavfiles
+    d["txtfiles"] = txtfiles
+    d["phonefiles"] = phonefiles
+    d["jsonfiles"] = jsonfiles
+    return d
+
+
+"""
 def check_fetch_ljspeech(conditioning_type):
-    """ Check for ljspeech
+    ''' Check for ljspeech
 
         This dataset cannot be downloaded or preprocessed automatically!
-    """
+    '''
     if conditioning_type == "hybrid":
         partial_path = os.sep + "Tmp" + os.sep + "kastner" + os.sep + "lj_speech_hybrid_speakers"
     else:
@@ -366,11 +395,10 @@ def check_fetch_ljspeech(conditioning_type):
         print("WARNING: {}".format(err.format(partial_path)))
     return partial_path
 
-
 def fetch_ljspeech(conditioning_type="hybrid"):
-    """
+    '''
     only returns file paths, and metadata/conversion routines
-    """
+    '''
     partial_path = check_fetch_ljspeech(conditioning_type)
     features_path = os.path.join(partial_path, "numpy_features")
     norm_path = os.path.join(partial_path, "norm_info")
@@ -394,6 +422,7 @@ def fetch_ljspeech(conditioning_type="hybrid"):
     dataset_storage["vocabulary_size"] = len(ljspeech_hybridset)
     dataset_storage["vocabulary"] = translation
     return dataset_storage
+"""
 
 
 class IdxDecodeError(ValueError):
@@ -604,7 +633,7 @@ def check_fetch_fruitspeech():
 
 
 def fetch_fruitspeech(fftsize=512, step=16, mean_normalize=True,
-                      real=False, compute_onesided=True):
+                      real=False, compute_onesided=False):
     audio_path = check_fetch_fruitspeech()
     files = sorted([audio_path + os.sep + f for f in os.listdir(audio_path) if f.endswith(".wav")])
     specgrams = []
@@ -651,3 +680,26 @@ def make_sinewaves(n_timesteps, n_waves, base_freq=3, offset=True,
         full_sines[full_sines > square_thresh] = 1
     full_sines = full_sines[:, :, None]
     return full_sines
+
+
+def check_fetch_norvig_words():
+    partial_path = get_tfbldr_dataset_dir("norvig_words")
+    full_path = partial_path + os.sep + "count_1w.txt"
+    if not os.path.exists(full_path):
+        logger.info("{} not found, downloading...".format(full_path))
+        download("https://norvig.com/ngrams/count_1w.txt", full_path)
+    return partial_path
+
+
+def fetch_norvig_words():
+    # https://norvig.com/ngrams/count_1w.txt
+    words_path = check_fetch_norvig_words()
+
+    words_file = words_path + os.sep + "count_1w.txt"
+    with open(words_file, "r") as f:
+        lines = f.readlines()
+    words = [l.split("\t")[0] for l in lines] 
+    words = sorted(words)[::-1]
+    d = {}
+    d["data"] = words
+    return d

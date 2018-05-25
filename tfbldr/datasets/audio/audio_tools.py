@@ -168,33 +168,94 @@ def fetch_sample_speech_eustace(n_samples=None):
     return fs, speech
 
 
-def stft(X, fftsize=128, step="half", mean_normalize=True, real=False,
-         compute_onesided=True):
+def _hertz_to_mel(frequencies_hertz):
+    _MEL_BREAK_FREQUENCY_HERTZ = 700.0
+    _MEL_HIGH_FREQUENCY_Q = 1127.0
+    # log1p?
+    return _MEL_HIGH_FREQUENCY_Q * np.log(1. + (frequencies_hertz / _MEL_BREAK_FREQUENCY_HERTZ))
+
+
+def linear_to_mel_weight_matrix(n_fft,
+                                sample_rate,
+                                lower_edge_hertz=125.0,
+                                upper_edge_hertz=3800.0,
+                                n_filts=20,
+                                dtype=np.float32):
+    # conversion of TF routine in numpy
+    bands_to_zero = 1
+    nyquist_hz = sample_rate / 2.
+    linear_frequencies = np.linspace(0., nyquist_hz, n_fft, dtype=np.float64)[bands_to_zero:]
+    spectrogram_bins_mel = _hertz_to_mel(linear_frequencies)[:, None]
+    base_edges = np.linspace(_hertz_to_mel(lower_edge_hertz), _hertz_to_mel(upper_edge_hertz), n_filts + 2)
+    band_edges_mel = np.array([base_edges[i:i + 3] for i in range(len(base_edges) - 2)])
+    lower_edge_mel = band_edges_mel[:, 0][None]
+    center_mel = band_edges_mel[:, 1][None]
+    upper_edge_mel = band_edges_mel[:, 2][None]
+
+    lower_slopes = (spectrogram_bins_mel - lower_edge_mel) / (
+        center_mel - lower_edge_mel)
+
+    upper_slopes = (upper_edge_mel - spectrogram_bins_mel) / (
+        upper_edge_mel - center_mel)
+
+    mel_weights_matrix = np.maximum(
+        0., np.minimum(lower_slopes, upper_slopes))
+    mel_weights_matrix = np.pad(mel_weights_matrix, (bands_to_zero, 0), "constant", constant_values=(0.,))[:, bands_to_zero:]
+    return mel_weights_matrix.astype(dtype)
+
+def _raised_cosine_window(window_length, periodic, a, b):
+    even = 1 - window_length % 2
+    periodic = 1. if True else False
+    n = np.float64(window_length + periodic * even - 1)
+    count = np.arange(window_length).astype(np.float64)
+    cos_arg = 2 * np.pi * count / n
+    return a - b * np.cos(cos_arg)
+
+
+def stft(X, windowsize=None, fftsize=None, step="half", mean_normalize=True, real=False,
+         window_type="hann", periodic=True, compute_onesided=True):
     """
     Compute STFT for 1D real valued input X
     """
     if real:
+        raise ValueError("real=True needs debug")
         local_fft = fftpack.rfft
-        cut = -1
+        cut = None
     else:
         local_fft = fftpack.fft
         cut = None
-    if compute_onesided:
+
+    if fftsize == None:
+        assert windowsize is not None
+        enclosing_fftsize = int(2 ** np.ceil(np.log(windowsize) / np.log(2.0)))
+        fftsize = enclosing_fftsize
+    else:
+        windowsize = fftsize
+
+    if compute_onesided or real:
         cut = fftsize // 2 + 1
+
     if mean_normalize:
         X -= X.mean()
+
     if step == "half":
-        X = halfoverlap(X, fftsize)
+        X = halfoverlap(X, windowsize)
     else:
-        X = overlap(X, fftsize, step)
+        X = overlap(X, windowsize, step)
+
     size = fftsize
-    win = 0.54 - .46 * np.cos(2 * np.pi * np.arange(size) / (size - 1))
+    if window_type == "hann" and periodic:
+        win = _raised_cosine_window(size, True, 0.5, 0.5)
+    else:
+        raise ValueError("No other windows currently supported")
+        #win = 0.54 - .46 * np.cos(2 * np.pi * np.arange(size) / (size - 1))
+    #win = 0.54 - .46 * np.cos(2 * np.pi * np.arange(size) / (size - 1))
     X = X * win[None]
-    X = local_fft(X)[:, :cut]
+    X = local_fft(X.astype(np.float64))[:, :cut]
     return X
 
 
-def istft(X, fftsize=128, step="half", wsola=False, mean_normalize=True,
+def istft(X, windowsize=None, fftsize=None, step="half", wsola=False, mean_normalize=True,
           real=False, compute_onesided=True):
     """
     Compute ISTFT for STFT transformed X
@@ -206,6 +267,8 @@ def istft(X, fftsize=128, step="half", wsola=False, mean_normalize=True,
         X = X_pad
     else:
         local_ifft = fftpack.ifft
+    if fftsize == None:
+        assert windowsize == None
     if compute_onesided:
         X_pad = np.zeros((X.shape[0], 2 * X.shape[1])) + 0j
         X_pad[:, :fftsize // 2 + 1] = X
@@ -1617,7 +1680,7 @@ def mel_to_herz(mel):
     return freqs
 
 
-def mel_freq_weights(n_fft, fs, n_filts=None, width=None):
+def mel_freq_weights(n_fft, fs, real=False, compute_onesided=False, n_filts=None, width=None):
     """
     Based on code by Dan Ellis
 
@@ -1632,6 +1695,8 @@ def mel_freq_weights(n_fft, fs, n_filts=None, width=None):
     else:
         n_filts = int(n_filts)
         assert n_filts > 0
+    if real:
+        n_fft = 2 * n_fft
     weights = np.zeros((n_filts, n_fft))
     fft_freqs = np.arange(n_fft // 2) / n_fft * fs
     min_mel = herz_to_mel(min_freq)
@@ -1650,6 +1715,8 @@ def mel_freq_weights(n_fft, fs, n_filts=None, width=None):
     weights = np.diag(2. / (bin_freqs[2:n_filts + 2]
                       - bin_freqs[:n_filts])).dot(weights)
     weights[:, n_fft // 2:] = 0
+    if real or compute_onesided:
+        weights = weights[:, :n_fft // 2]
     return weights
 
 
@@ -1664,7 +1731,7 @@ def time_attack_agc(X, fs, t_scale=0.5, f_scale=1.):
     f_scale = float(f_scale)
     window_size = n_fft
     window_step = window_size // 2
-    X_freq = stft(X, window_size, mean_normalize=False)
+    X_freq = stft(X, fftsize=window_size, mean_normalize=False)
     fft_fs = fs / window_step
     n_bands = max(10, 20 / f_scale)
     mel_width = f_scale * n_bands / 10.
@@ -1683,7 +1750,7 @@ def time_attack_agc(X, fs, t_scale=0.5, f_scale=1.):
     E = E.dot(f_to_a.T)
     E = fbg.dot(E.T)
     E[E <= 0] = np.min(E[E > 0])
-    ts = istft(X_freq / E, window_size, mean_normalize=False)
+    ts = istft(X_freq / E, fftsize=window_size, mean_normalize=False)
     return ts, X_freq, E
 
 
@@ -3789,7 +3856,7 @@ def run_fft_vq_example():
     n_fft = 512
     time_smoothing = 4
     def _pre(list_of_data):
-        f_c = np.vstack([stft(dd, n_fft) for dd in list_of_data])
+        f_c = np.vstack([stft(dd, fftsize=n_fft) for dd in list_of_data])
         if len(f_c) % time_smoothing != 0:
             newlen = len(f_c) - len(f_c) % time_smoothing
             f_c = f_c[:newlen]
@@ -3961,7 +4028,7 @@ def run_phase_vq_example():
         # fruit perhaps due to samplerates
         n_fft = 256
         step = 32
-        f_r = np.vstack([np.abs(stft(dd, n_fft, step=step, real=False,
+        f_r = np.vstack([np.abs(stft(dd, fftsize=n_fft, step=step, real=False,
                                 compute_onesided=False))
                          for dd in list_of_data])
         return f_r, n_fft, step
@@ -4035,7 +4102,7 @@ def run_fft_dct_example():
     fs, d = fetch_sample_speech_fruit()
     n_fft = 64
     X = d[0]
-    X_stft = stft(X, n_fft)
+    X_stft = stft(X, fftsize=n_fft)
     X_rr = complex_to_real_view(X_stft)
     X_dct = fftpack.dct(X_rr, axis=-1, norm='ortho')
     X_dct_sub = X_dct[1:] - X_dct[:-1]
