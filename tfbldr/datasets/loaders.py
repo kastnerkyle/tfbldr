@@ -95,7 +95,7 @@ def execute(cmd, shell=False):
         raise subprocess.CalledProcessError(return_code, cmd)
 
 
-def pe(cmd, shell=False, verbose=True):
+def pe(cmd, shell=True, verbose=True):
     """
     Print and execute command on system
     """

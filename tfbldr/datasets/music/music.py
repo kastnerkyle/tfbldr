@@ -568,25 +568,83 @@ def pe(cmd, shell=True):
     return ret
 
 
-def pitch_and_duration_to_piano_roll(list_of_pitch_voices, list_of_duration_voices, min_dur):
-    def expand(pitch, dur, min_dur):
+def chord_and_chord_duration_to_quantized(list_of_chords, list_of_chord_durations, min_dur,
+                                          list_of_chord_metas=None, verbose=False):
+    def expand(chords, durs, min_dur, chord_metas):
+        assert len(chords) == len(durs)
+        expanded = [int(d // min_dur) for d in durs]
+        check = [d / min_dur for d in durs]
+        if not all([e == c for e, c in zip(expanded, check)]):
+            if verbose:
+                errs = sum([e != c for e, c in zip(expanded, check)])
+
+                print("WARNING: {} of {} notes did not evenly quantize".format(errs, len(check)))
+        # shift up by 1 to accomodate the fact that 0 is rest
+        stretch = [[c] * e for c, e in zip(chords, expanded)]
+        stretch_metas = []
+        for m in chord_metas:
+           assert len(m) == len(expanded)
+           stretch_m = [[mi] * e for mi, e in zip(m, expanded)]
+           stretch_metas.append(stretch_m)
+        # flatten out to 1 voice
+        return ([ci for c in stretch for ci in c],) + tuple([[smii for smi in sm for smii in smi] for sm in stretch_metas])
+
+    assert len(list_of_chords) == len(list_of_chord_durations)
+    if list_of_chord_metas is not None:
+        assert len(list_of_chords) == len(list_of_chord_metas[0])
+        for lcm in list_of_chord_metas:
+            assert len(lcm) == len(list_of_chord_metas[0])
+
+    ci = expand(list_of_chords, list_of_chord_durations, min_dur, [list_of_chord_metas[i] for i in range(len(list_of_chord_metas))])
+
+    if list_of_chord_metas is not None:
+        return (ci[0],) + tuple([ci[i + 1] for i in range(len(ci[1:]))])
+    else:
+        return (ci[0],)
+
+
+def pitch_and_duration_to_quantized(list_of_pitch_voices, list_of_duration_voices, min_dur,
+                                    list_of_metas_voices=None, verbose=False):
+    def expand(pitch, dur, min_dur, metas):
         assert len(pitch) == len(dur)
         expanded = [int(d // min_dur) for d in dur]
         check = [d / min_dur for d in dur]
-        assert all([e == c for e, c in zip(expanded, check)])
-        stretch = [[p] * e for p, e in zip(pitch, expanded)]
-        # flatten out to 1 voice
-        return [pi for p in stretch for pi in p]
+        if not all([e == c for e, c in zip(expanded, check)]):
+            if verbose:
+                errs = sum([e != c for e, c in zip(expanded, check)])
 
+                print("WARNING: {} of {} notes did not evenly quantize".format(errs, len(check)))
+        # shift up by 1 to accomodate the fact that 0 is rest
+        stretch = [[p if p == 0 else p + 1] + [1] * (e - 1) if e > 1 else [p if p == 0 else p + 1] for p, e in zip(pitch, expanded)]
+        stretch_metas = []
+        for m in metas:
+           assert len(m) == len(expanded)
+           stretch_m = [[mi] * e for mi, e in zip(m, expanded)]
+           stretch_metas.append(stretch_m)
+        # flatten out to 1 voice
+        return ([pi for p in stretch for pi in p],) + tuple([[smii for smi in sm for smii in smi] for sm in stretch_metas])
+
+    assert len(list_of_pitch_voices) == len(list_of_duration_voices)
+    if list_of_metas_voices is not None:
+        assert len(list_of_duration_voices) == len(list_of_metas_voices[0])
+        for lmv in list_of_metas_voices:
+            assert len(lmv) == len(list_of_metas_voices[0])
     res = []
-    for lpv, ldv in zip(list_of_pitch_voices, list_of_duration_voices):
-        qi = expand(lpv, ldv, min_dur)
+    for n, (lpv, ldv) in enumerate(zip(list_of_pitch_voices, list_of_duration_voices)):
+        qi = expand(lpv, ldv, min_dur, [list_of_metas_voices[i][n] for i in range(len(list_of_metas_voices))])
         res.append(qi)
 
-    min_len = min([len(ri) for ri in res])
-    res = [ri[:min_len] for ri in res]
-    piano_roll = np.array(res).transpose()
-    return piano_roll
+    min_len = min([len(ri[0]) for ri in res])
+    max_len = max([len(ri[0]) for ri in res])
+    if min_len != max_len:
+        if verbose:
+           print("min_len != max_len, truncating")
+    res0 = [ri[0][:min_len] for ri in res]
+    quantized = np.array(res0).transpose()
+    if list_of_metas_voices is not None:
+        return (quantized,) + tuple([[ri[i + 1] for ri in res] for i in range(len(res[0][1:]))])
+    else:
+        return (quantized,)
 
 
 def pitches_and_durations_to_pretty_midi(pitches, durations,
@@ -773,12 +831,13 @@ def pitches_and_durations_to_pretty_midi(pitches, durations,
 
 
 def quantized_to_pitch_duration(quantized,
-                                quantized_bin_size,
-                                max_hold_bars=1):
+                                quantized_bin_size):
     """
     takes in list of list of list, or list of array with axis 0 time, axis 1 voice_number (S,A,T,B)
     outer list is over samples, middle list is over voice, inner list is over time
     """
+
+    raise ValueError("quantized_to_pitch_duration NEEDS FIX FOR HELD NOTES")
 
     is_seq_of_seq = False
     try:
@@ -1286,30 +1345,58 @@ def plot_pitches_and_durations(pitches, durations,
             print("Error writing index {}, continuing...".format(n))
         """
 
+def music21_to_chord_duration(p):
+    """
+    Takes in a Music21 score, and outputs three lists
+    List for chords (by primeFormString string name)
+    List for chord function (by romanNumeralFromChord .romanNumeral)
+    List for durations
+    """
+    p_chords = p.chordify()
+    p_chords_o = p_chords.flat.getElementsByClass('Chord')
+    chord_list = []
+    chord_function_list = []
+    duration_list = []
+    for ch in p_chords_o:
+        chord_list.append(ch.primeFormString)
+        duration_list.append(ch.duration.quarterLength)
+        ch.closedPosition(forceOctave=4, inPlace=True)
+        chord_function_list.append(roman.romanNumeralFromChord(ch).figure)
+    return chord_list, chord_function_list, duration_list
+
 
 def music21_to_pitch_duration(p, verbose=False):
     """
-    Takes in a Music21 score, and outputs 3 list of list
+    Takes in a Music21 score, and outputs 4 list of list
     One for pitch
     One for duration
     list for part times of each voice
+    list of list of fermatas
     """
     parts = []
     parts_times = []
     parts_delta_times = []
+    parts_fermatas = []
     for i, pi in enumerate(p.parts):
         part = []
         part_time = []
         part_delta_time = []
+        part_fermatas = []
         total_time = 0
         all_chord = True
         for n in pi.stream().flat.notesAndRests:
+            has_fermata = any([ne.isClassOrSubclass(('Fermata',)) for ne in n.expressions])
+            if has_fermata:
+                part_fermatas.append(1)
+            else:
+                part_fermatas.append(0)
+
             if n.isRest:
                 part.append(0)
                 all_chord = False
             else:
                 if not n.isChord:
-                    part.append(n.midi)
+                    part.append(n.pitch.midi)
                     all_chord = False
             part_time.append(total_time + n.duration.quarterLength)
             total_time = part_time[-1]
@@ -1321,16 +1408,17 @@ def music21_to_pitch_duration(p, verbose=False):
             parts.append(part)
             parts_times.append(part_time)
             parts_delta_times.append(part_delta_time)
-    return parts, parts_times, parts_delta_times
+            parts_fermatas.append(part_fermatas)
+    return parts, parts_times, parts_delta_times, parts_fermatas
 
 
-def music21_to_piano_roll(p, quantized_bin_size=0.125):
+def music21_to_quantized(p, quantized_bin_size=0.125):
     """
-    Convert from music21 score to piano roll
+    Convert from music21 score to quantized
     """
     r = music21_to_pitch_duration(p)
     parts, _, parts_durations = r
-    pr = pitch_and_duration_to_piano_roll(parts, parts_durations, quantized_bin_size)
+    pr = pitch_and_duration_to_quantized(parts, parts_durations, quantized_bin_size)
     return pr
 
 
