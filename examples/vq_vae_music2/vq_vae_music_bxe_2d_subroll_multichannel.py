@@ -56,6 +56,7 @@ dbpad = [0, 4 // 2 - 1, 4 // 2 - 1, 0]
 def create_encoder(inp, bn_flag):
     l1 = Conv2d([inp], [4], l_dims[0][0], kernel_size=l_dims[0][1:3], name="enc1",
                 strides=l_dims[0][-1],
+                #border_mode=ebpad if l_dims[0][-1][1] != 1 else "same",
                 border_mode=ebpad,
                 random_state=random_state)
     bn_l1 = BatchNorm2d(l1, bn_flag, name="bn_enc1")
@@ -121,7 +122,7 @@ def create_vqvae(inp, bn):
 def create_graph():
     graph = tf.Graph()
     with graph.as_default():
-        images = tf.placeholder(tf.float32, shape=[None, 48, 16, 4])
+        images = tf.placeholder(tf.float32, shape=[None, 52, 16, 4])
         bn_flag = tf.placeholder_with_default(tf.zeros(shape=[]), shape=[])
         x_tilde, z_e_x, z_q_x, z_i_x, z_nst_q_x, z_emb = create_vqvae(images, bn_flag)
         l1 = tf.reduce_mean(BernoulliCrossEntropyCost(x_tilde[..., 0][..., None], images[..., 0][..., None]))

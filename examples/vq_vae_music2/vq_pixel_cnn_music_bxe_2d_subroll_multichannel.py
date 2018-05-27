@@ -78,7 +78,7 @@ def create_pixel_cnn(inp, lbl):
 def create_graph():
     graph = tf.Graph()
     with graph.as_default():
-        images = tf.placeholder(tf.float32, shape=[None, 12, 4, 1])
+        images = tf.placeholder(tf.float32, shape=[None, 13, 4, 1])
         labels = tf.placeholder(tf.float32, shape=[None, 3])
         x_tilde = create_pixel_cnn(images, labels)
         loss = tf.reduce_mean(CategoricalCrossEntropyLinearIndexCost(x_tilde, images))

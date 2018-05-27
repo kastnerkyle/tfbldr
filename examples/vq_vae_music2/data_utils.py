@@ -38,10 +38,10 @@ def dump_subroll_samples(x_rec, sample_labels, num_each, seed, temp, chords, off
             satb =[[], [], [], []]
             for v in range(x_rec_i.shape[-1]):
                 for ts in range(measure_len):
-                    if ts in events:
+                    if ts in events and events[ts][v] in offset_to_pitch_map:
                         satb[v].append(offset_to_pitch_map[events[ts][v]])
                     else:
-                        # edge case if ALL voices rest
+                        # edge case if ALL voices rest or get an out of range note
                         satb[v].append(0)
             # was ordered btas
             satb = satb[::-1]
@@ -60,7 +60,7 @@ def dump_subroll_samples(x_rec, sample_labels, num_each, seed, temp, chords, off
         if chords is None:
             np.savez("samples/sample_{:04d}_seed_{:04d}.npz".format(offset, seed), pr=x_rec_i, midi=satb_midi, notes=satb_notes, labelnames=these_labelnames)
         else:
-            np.savez("samples/chords_{:04d}_seed_{:04d}.npz".format(chords, offset, seed), pr=x_rec_i, midi=satb_midi, notes=satb_notes, labelnames=these_labelnames)
+            np.savez("samples/chords_{}_sample_{:04d}_seed_{:04d}.npz".format(chords, offset, seed), pr=x_rec_i, midi=satb_midi, notes=satb_notes, labelnames=these_labelnames)
         # http://www.janvanbiezen.nl/18century.html
         quantized_to_pretty_midi([satb_midi],
                                  0.25,
@@ -71,10 +71,11 @@ def dump_subroll_samples(x_rec, sample_labels, num_each, seed, temp, chords, off
         print("saved sample {}".format(offset))
 
 
-def music_pitch_and_chord_to_imagelike_and_label(music_dict, augment=False):
+def music_pitch_and_chord_to_imagelike_and_label(music_dict, divisible_by=4, augment=False):
     all_quantized_16th_pitches = music_dict["list_of_data_quantized_16th_pitches_no_hold"]
     all_quantized_16th_chord_functions = music_dict["list_of_data_quantized_16th_chord_functions"]
     if augment:
+        raise ValueError("augmentation not yet debugged")
         aug = []
         aug_cf = []
         for n in range(len(all_quantized_16th_pitches)):
@@ -144,11 +145,12 @@ def music_pitch_and_chord_to_imagelike_and_label(music_dict, augment=False):
     pitch_to_offset_lookup = {v: k for k, v in enumerate(np.sort(pitch_set))}
     offset_to_pitch_lookup = {v: k for k, v in pitch_to_offset_lookup.items()}
 
-    oh_lu = np.eye(len(pitch_to_offset_lookup))
+    best_dividible = int((len(pitch_to_offset_lookup) // int(divisible_by) + 1) * int(divisible_by))
+    oh_lu = np.eye(best_dividible)
     imagelikes = []
     for n in range(len(pitch_chunks)):
         pc = pitch_chunks[n]
-        new_imlike = np.zeros((len(pitch_to_offset_lookup), pc.shape[0], pc.shape[1]))
+        new_imlike = np.zeros((best_dividible, pc.shape[0], pc.shape[1]))
         for v in range(pc.shape[1]):
             vpc = pc[:, v]
             lu = np.array([oh_lu[pitch_to_offset_lookup[pi]] for pi in vpc]).T

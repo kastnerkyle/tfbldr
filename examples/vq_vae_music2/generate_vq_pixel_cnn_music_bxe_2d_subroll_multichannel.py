@@ -38,8 +38,8 @@ label_to_chord_function = {int(k): v for k, v in d["label_to_chord_function_kv"]
 chord_function_to_label = {v: k for k, v in label_to_chord_function.items()}
 
 labels = d["labels"]
-train_labels = labels[:-500]
-valid_labels = labels[-500:]
+train_labels = labels[:-num_to_generate]
+valid_labels = labels[-num_to_generate:]
 sample_labels = valid_labels
 
 if args.chords is not None:
@@ -83,7 +83,7 @@ with tf.Session(config=config) as sess1:
     )
     y = sample_labels[:num_to_generate]
 
-    pix_z = np.zeros((num_to_generate, 12, 4))
+    pix_z = np.zeros((num_to_generate, 13, 4))
     for i in range(pix_z.shape[1]):
         for j in range(pix_z.shape[2]):
             print("Sampling v completion pixel {}, {}".format(i, j))
@@ -118,7 +118,7 @@ with tf.Session(config=config) as sess2:
         *[tf.get_collection(name)[0] for name in fields]
     )
     z_i = pix_z[:num_to_generate]
-    fake_image_data = np.zeros((num_to_generate, 48, 16, 4))
+    fake_image_data = np.zeros((num_to_generate, 52, 16, 4))
     feed = {vs.images: fake_image_data,
             vs.z_i_x: z_i,
             vs.bn_flag: 1.}

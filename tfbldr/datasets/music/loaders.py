@@ -18,7 +18,6 @@ try:
 except ImportError:
     logger.info("Unable to retrieve music21 related utilities")
 
-
 from .music import music21_to_pitch_duration
 from .music import music21_to_chord_duration
 from .music import pitch_and_duration_to_quantized
@@ -62,13 +61,14 @@ def _music_single_extract(files, data_path, verbose, n):
     k = p.analyze("key")
     orig_key = k.name
     orig_mode = k.mode
+    if k.mode not in ["minor", "major"]:
+        logger.info("Mode neither minor not major in {}, aborting".format(f))
+        return (TIMEOUT_ID,)
+
     if verbose:
         parse_time = time.time()
         r = parse_time - start_time
         logger.info("Parse time {}:{}".format(f, r))
-
-    p.keySignature = k
-    an = "C" if "major" in k.name else "A"
 
     time_sigs = [str(ts).split(" ")[-1].split(">")[0] for ts in p.recurse().getElementsByClass(meter.TimeSignature)]
     nums = [int(ts.split("/")[0]) for ts in time_sigs]
@@ -84,9 +84,22 @@ def _music_single_extract(files, data_path, verbose, n):
     if len(time_sigs) < 1:
         time_sigs = ["4/4"]
 
-    pc = pitch.Pitch(an)
-    i = interval.Interval(k.tonic, pc)
-    p = p.transpose(i)
+    """
+    https://gist.github.com/aldous-rey/68c6c43450517aa47474
+    https://github.com/feynmanliang/bachbot/blob/557abb971b6886f831e0566956ec76ee17aa9649/scripts/datasets.py#L97
+    """
+    majors = dict([("A-", 4),("A", 3),("B-", 2),("B", 1),("C", 0),("C#",-1),("D-", -1),("D", -2),("E-", -3),("E", -4),("F", -5),("F#",6),("G-", 6),("G", 5)])
+    minors = dict([("A-", 1),("A", 0),("B-", -1),("B", -2),("C", -3),("C#",-4),("D-", -4),("D", -5),("E-", 6),("E", 5),("F", 4),("F#",3),("G-", 3),("G", 2)])
+
+    if k.mode == "major":
+        half_steps = majors[k.tonic.name]
+    elif k.mode == "minor":
+        half_steps = minors[k.tonic.name]
+    p = p.transpose(half_steps)
+
+    for ks in p.flat.getKeySignatures():
+        ks.sharps = 0
+
     k = p.analyze("key")
     if verbose:
         transpose_time = time.time()
@@ -100,7 +113,7 @@ def _music_single_extract(files, data_path, verbose, n):
         r = pitch_duration_time - start_time
         logger.info("music21 to pitch_duration time {}:{}".format(f, r))
 
-    str_key = "{} minor".format(an) if "minor" in k.name else "{} major".format(an)
+    str_key = k.name
 
     if verbose:
         ttime = time.time()
