@@ -87,12 +87,13 @@ def _music_single_extract(files, data_path, verbose, n):
     pc = pitch.Pitch(an)
     i = interval.Interval(k.tonic, pc)
     p = p.transpose(i)
+    k = p.analyze("key")
     if verbose:
         transpose_time = time.time()
         r = transpose_time - start_time
         logger.info("Transpose time {}:{}".format(f, r))
 
-    chords, chord_functions, chord_durations = music21_to_chord_duration(p)
+    chords, chord_functions, chord_durations = music21_to_chord_duration(p, k)
     pitches, parts_times, parts_delta_times, parts_fermatas = music21_to_pitch_duration(p)
     if verbose:
         pitch_duration_time = time.time()
@@ -111,7 +112,7 @@ def _music_single_extract(files, data_path, verbose, n):
 
 def _music_extract(data_path, pickle_path, ext=".xml",
                    parse_timeout=100,
-                   multiprocess_count=max([int(3 * ((multiprocessing.cpu_count() + 1) // 4)), 1]),
+                   multiprocess_count=4,
                    verbose=False):
 
     if not os.path.exists(pickle_path):
@@ -240,6 +241,60 @@ def _music_extract(data_path, pickle_path, ext=".xml",
     return r
 
 
+def _common_features_from_music_extract(mu, equal_voice_count=4, verbose=False):
+    all_quantized_16th_pitches = []
+    all_quantized_16th_pitches_no_hold = []
+    all_quantized_16th_fermatas = []
+    all_quantized_16th_subbeats = []
+    all_quantized_16th_chords = []
+    all_quantized_16th_chord_functions = []
+    all_pitches = mu["list_of_data_pitches"]
+    all_parts_delta_times = mu["list_of_data_time_deltas"]
+    all_parts_fermatas = mu["list_of_data_parts_fermatas"]
+    all_chords = mu["list_of_data_chords"]
+    all_chord_functions = mu["list_of_data_chord_functions"]
+    all_chord_durations = mu["list_of_data_chord_durations"]
+
+
+    invalids = []
+    for i in range(len(all_pitches)):
+        try:
+            qq = pitch_and_duration_to_quantized(all_pitches[i], all_parts_delta_times[i], .25, list_of_metas_voices=[all_parts_fermatas[i]], verbose=verbose)
+            qqnh = pitch_and_duration_to_quantized(all_pitches[i], all_parts_delta_times[i], .25, list_of_metas_voices=[all_parts_fermatas[i]], verbose=verbose, hold_symbol=False)
+            cc = chord_and_chord_duration_to_quantized(all_chords[i], all_chord_durations[i], .25, list_of_chord_metas=[all_chord_functions[i]], verbose=verbose)
+
+            if qq[0].shape[1] != equal_voice_count:
+                #print("Invalid voices {}".format(i))
+                invalids.append(i)
+            else:
+                subbeat_counter = [1, 2, 3, 4] * (len(qq[0]) // 4 + 1)
+                subbeat_counter = subbeat_counter[:len(qq[0])]
+                # collapse fermatas and make the subbeat counter
+                collapsed_fermatas = [1 if sum([qq[1][vi][ti] for vi in range(len(qq[1]))]) > 0 else 0
+                 for ti in range(len(qq[0]))]
+                all_quantized_16th_pitches.append(qq[0])
+                all_quantized_16th_pitches_no_hold.append(qqnh[0])
+                all_quantized_16th_fermatas.append(collapsed_fermatas)
+                all_quantized_16th_subbeats.append(subbeat_counter)
+                all_quantized_16th_chords.append(cc[0])
+                all_quantized_16th_chord_functions.append(cc[1])
+        except:
+            #print("Invalid err {}".format(i))
+            invalids.append(i)
+    assert len(all_quantized_16th_chords) == len(all_quantized_16th_pitches)
+    mu_res = {}
+    for k, v in mu.items():
+        mu_res[k] = [vi for n, vi in enumerate(v) if n not in invalids]
+        assert len(mu_res[k]) == len(all_quantized_16th_pitches)
+    mu_res["list_of_data_quantized_16th_pitches"] = all_quantized_16th_pitches
+    mu_res["list_of_data_quantized_16th_pitches_no_hold"] = all_quantized_16th_pitches_no_hold
+    mu_res["list_of_data_quantized_16th_fermatas"] = all_quantized_16th_fermatas
+    mu_res["list_of_data_quantized_16th_subbeats"] = all_quantized_16th_subbeats
+    mu_res["list_of_data_quantized_16th_chords"] = all_quantized_16th_chords
+    mu_res["list_of_data_quantized_16th_chord_functions"] = all_quantized_16th_chord_functions
+    return mu_res
+
+
 def check_fetch_jsb():
     """ Move files into tfbldr dir, in case python path is nfs """
     all_bach_paths = corpus.getComposer("bach")
@@ -267,49 +322,8 @@ def fetch_jsb(keys=["C major", "A minor"],
                         # debug... set to None
                         #multiprocess_count=None,
                         verbose=verbose)
-
-    all_quantized_16th_pitches = []
-    all_quantized_16th_fermatas = []
-    all_quantized_16th_subbeats = []
-    all_quantized_16th_chords = []
-    all_quantized_16th_chord_functions = []
-    all_pitches = mu["list_of_data_pitches"]
-    all_parts_delta_times = mu["list_of_data_time_deltas"]
-    all_parts_fermatas = mu["list_of_data_parts_fermatas"]
-    all_chords = mu["list_of_data_chords"]
-    all_chord_functions = mu["list_of_data_chord_functions"]
-    all_chord_durations = mu["list_of_data_chord_durations"]
-
-    invalids = []
-    for i in range(len(all_pitches)):
-        try:
-            qq = pitch_and_duration_to_quantized(all_pitches[i], all_parts_delta_times[i], 0.25, list_of_metas_voices=[all_parts_fermatas[i]])
-            cc = chord_and_chord_duration_to_quantized(all_chords[i], all_chord_durations[i], .25, list_of_chord_metas=[all_chord_functions[i]], verbose=verbose)
-            if qq[0].shape[1] != equal_voice_count:
-                invalids.append(i)
-            else:
-                subbeat_counter = [1, 2, 3, 4] * (len(qq[0]) // 4 + 1)
-                subbeat_counter = subbeat_counter[:len(qq[0])]
-                # collapse fermatas and make the subbeat counter
-                collapsed_fermatas = [1 if sum([qq[1][vi][ti] for vi in range(len(qq[1]))]) > 0 else 0
-                 for ti in range(len(qq[0]))]
-                all_quantized_16th_pitches.append(qq[0])
-                all_quantized_16th_fermatas.append(collapsed_fermatas)
-                all_quantized_16th_subbeats.append(subbeat_counter)
-                all_quantized_16th_chords.append(cc[0])
-                all_quantized_16th_chord_functions.append(cc[1])
-        except:
-            invalids.append(i)
-    assert len(all_quantized_16th_chords) == len(all_quantized_16th_pitches)
-    mu_res = {}
-    for k, v in mu.items():
-        mu_res[k] = [vi for n, vi in enumerate(v) if n not in invalids]
-        assert len(mu_res[k]) == len(all_quantized_16th_pitches)
-    mu_res["list_of_data_quantized_16th_pitches"] = all_quantized_16th_pitches
-    mu_res["list_of_data_quantized_16th_fermatas"] = all_quantized_16th_fermatas
-    mu_res["list_of_data_quantized_16th_subbeats"] = all_quantized_16th_subbeats
-    mu_res["list_of_data_quantized_16th_chords"] = all_quantized_16th_chords
-    mu_res["list_of_data_quantized_16th_chord_functions"] = all_quantized_16th_chord_functions
+    mu_res = _common_features_from_music_extract(mu, equal_voice_count=equal_voice_count,
+                                                 verbose=verbose)
     return mu_res
 
 
@@ -341,51 +355,6 @@ def fetch_josquin(keys=["C major", "A minor"],
                         # debug... set to None
                         #multiprocess_count=None,
                         verbose=verbose)
-
-    all_quantized_16th_pitches = []
-    all_quantized_16th_fermatas = []
-    all_quantized_16th_subbeats = []
-    all_quantized_16th_chords = []
-    all_quantized_16th_chord_functions = []
-    all_pitches = mu["list_of_data_pitches"]
-    all_parts_delta_times = mu["list_of_data_time_deltas"]
-    all_parts_fermatas = mu["list_of_data_parts_fermatas"]
-    all_chords = mu["list_of_data_chords"]
-    all_chord_functions = mu["list_of_data_chord_functions"]
-    all_chord_durations = mu["list_of_data_chord_durations"]
-
-    invalids = []
-    for i in range(len(all_pitches)):
-        try:
-            qq = pitch_and_duration_to_quantized(all_pitches[i], all_parts_delta_times[i], .25, list_of_metas_voices=[all_parts_fermatas[i]], verbose=verbose)
-            cc = chord_and_chord_duration_to_quantized(all_chords[i], all_chord_durations[i], .25, list_of_chord_metas=[all_chord_functions[i]], verbose=verbose)
-
-            if qq[0].shape[1] != equal_voice_count:
-                #print("Invalid voices {}".format(i))
-                invalids.append(i)
-            else:
-                subbeat_counter = [1, 2, 3, 4] * (len(qq[0]) // 4 + 1)
-                subbeat_counter = subbeat_counter[:len(qq[0])]
-                # collapse fermatas and make the subbeat counter
-                collapsed_fermatas = [1 if sum([qq[1][vi][ti] for vi in range(len(qq[1]))]) > 0 else 0
-                 for ti in range(len(qq[0]))]
-                all_quantized_16th_pitches.append(qq[0])
-                all_quantized_16th_fermatas.append(collapsed_fermatas)
-                all_quantized_16th_subbeats.append(subbeat_counter)
-                all_quantized_16th_chords.append(cc[0])
-                all_quantized_16th_chord_functions.append(cc[1])
-        except:
-            #print("Invalid err {}".format(i))
-            invalids.append(i)
-    assert len(all_quantized_16th_chords) == len(all_quantized_16th_pitches)
-    mu_res = {}
-    for k, v in mu.items():
-        mu_res[k] = [vi for n, vi in enumerate(v) if n not in invalids]
-        assert len(mu_res[k]) == len(all_quantized_16th_pitches)
-    mu_res["list_of_data_quantized_16th_pitches"] = all_quantized_16th_pitches
-    mu_res["list_of_data_quantized_16th_fermatas"] = all_quantized_16th_fermatas
-    mu_res["list_of_data_quantized_16th_subbeats"] = all_quantized_16th_subbeats
-    mu_res["list_of_data_quantized_16th_chords"] = all_quantized_16th_chords
-    mu_res["list_of_data_quantized_16th_chord_functions"] = all_quantized_16th_chord_functions
-    from IPython import embed; embed(); raise ValueError()
+    mu_res = _common_features_from_music_extract(mu, equal_voice_count=equal_voice_count,
+                                                 verbose=verbose)
     return mu_res

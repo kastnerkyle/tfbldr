@@ -27,7 +27,7 @@ try:
     from .music import music21_to_pitch_duration
     from .music import music21_to_quantized
     from .music import plot_piano_roll
-    from .music import piano_roll_imlike_to_image_array
+    from .music import quantized_imlike_to_image_array
     from .music import midi_to_notes
     from .music import notes_to_midi
     from .music import quantized_to_pitch_duration

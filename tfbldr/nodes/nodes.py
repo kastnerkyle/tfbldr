@@ -762,12 +762,26 @@ def GatedMaskedConv2d(list_of_v_inputs, list_of_v_input_dims,
     if conditioning_class_input != None:
         if conditioning_num_classes is None:
             raise ValueError("If passing conditioning_class_input, must pass conditioning_num_classes")
-        c_e, emb = Embedding(conditioning_class_input, conditioning_num_classes,
-                             2 * num_feature_maps, random_state=random_state, name=name_embed)
+        n_embeds = _shape(conditioning_class_input)[-1]
+        if n_embeds == 1:
+            c_e, emb = Embedding(conditioning_class_input, conditioning_num_classes,
+                                 2 * num_feature_maps, random_state=random_state, name=name_embed)
+
+        else:
+            logger.info("GatedMaskedConv2d embedding input has dimension {} on last axis, creating {} embeddings".format(n_embeds, n_embeds))
+            c_e = None
+            for ii in range(n_embeds):
+                c_ei, embi = Embedding(conditioning_class_input[:, ii][:, None], conditioning_num_classes,
+                                       2 * num_feature_maps, random_state=random_state, name=name_embed + "_{}".format(ii))
+                if c_e is None:
+                    c_e = c_ei
+                else:
+                    c_e += c_ei
 
         shp = _shape(c_e)
         if len(shp) != 2:
             raise ValueError("conditioning_embed result should be 2D (input (N, 1)), got {}".format(shp))
+
 
     if conditioning_spatial_map != None:
         shp = _shape(conditioning_spatial_map)

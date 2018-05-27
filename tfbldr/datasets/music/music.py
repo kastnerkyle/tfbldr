@@ -604,7 +604,7 @@ def chord_and_chord_duration_to_quantized(list_of_chords, list_of_chord_duration
 
 
 def pitch_and_duration_to_quantized(list_of_pitch_voices, list_of_duration_voices, min_dur,
-                                    list_of_metas_voices=None, verbose=False):
+                                    list_of_metas_voices=None, verbose=False, hold_symbol=True):
     def expand(pitch, dur, min_dur, metas):
         assert len(pitch) == len(dur)
         expanded = [int(d // min_dur) for d in dur]
@@ -615,7 +615,10 @@ def pitch_and_duration_to_quantized(list_of_pitch_voices, list_of_duration_voice
 
                 print("WARNING: {} of {} notes did not evenly quantize".format(errs, len(check)))
         # shift up by 1 to accomodate the fact that 0 is rest
-        stretch = [[p if p == 0 else p + 1] + [1] * (e - 1) if e > 1 else [p if p == 0 else p + 1] for p, e in zip(pitch, expanded)]
+        if hold_symbol:
+            stretch = [[p if p == 0 else p + 1] + [1] * (e - 1) if e > 1 else [p if p == 0 else p + 1] for p, e in zip(pitch, expanded)]
+        else:
+            stretch = [[p] * e for p, e in zip(pitch, expanded)]
         stretch_metas = []
         for m in metas:
            assert len(m) == len(expanded)
@@ -653,7 +656,8 @@ def pitches_and_durations_to_pretty_midi(pitches, durations,
                                          add_to_name=0,
                                          lower_pitch_limit=12,
                                          list_of_quarter_length=None,
-                                         default_quarter_length=47,
+                                         default_quarter_length=120,
+                                         default_resolution=220,
                                          voice_params="woodwinds"):
     if not os.path.exists(save_dir):
         os.mkdir(save_dir)
@@ -768,8 +772,8 @@ def pitches_and_durations_to_pretty_midi(pitches, durations,
         assert len(durations_ss) == len(pitches_ss)
         # time length match
         assert all([len(durations_ss[i]) == len(pitches_ss[i]) for i in range(len(pitches_ss))])
-        pm_obj = pretty_midi.PrettyMIDI()
-        # Create an Instrument instance for a cello instrument
+        pm_obj = pretty_midi.PrettyMIDI(initial_tempo=default_quarter_length, resolution=default_resolution)
+        # Create an Instrument instance
         def mkpm(name):
             return pretty_midi.instrument_name_to_program(name)
 
@@ -831,13 +835,15 @@ def pitches_and_durations_to_pretty_midi(pitches, durations,
 
 
 def quantized_to_pitch_duration(quantized,
-                                quantized_bin_size):
+                                quantized_bin_size,
+                                hold_symbol,
+                                max_hold_bars=1):
     """
     takes in list of list of list, or list of array with axis 0 time, axis 1 voice_number (S,A,T,B)
     outer list is over samples, middle list is over voice, inner list is over time
     """
-
-    raise ValueError("quantized_to_pitch_duration NEEDS FIX FOR HELD NOTES")
+    if hold_symbol != False:
+        raise ValueError("quantized_to_pitch_duration NEEDS FIX FOR HELD NOTES")
 
     is_seq_of_seq = False
     try:
@@ -897,18 +903,19 @@ def quantized_to_pretty_midi(quantized,
                              quantized_bin_size,
                              save_dir="samples",
                              name_tag="sample_{}.mid",
+                             hold_symbol=False,
+                             max_hold_bars=1,
                              add_to_name=0,
                              lower_pitch_limit=12,
+                             default_quarter_length=120,
+                             default_resolution=220,
                              list_of_quarter_length=None,
-                             max_hold_bars=1,
-                             default_quarter_length=47,
                              voice_params="woodwinds"):
     """
     takes in list of list of list, or list of array with axis 0 time, axis 1 voice_number (S,A,T,B)
     outer list is over samples, middle list is over voice, inner list is over time
     """
-    all_pitches, all_durations = quantized_to_pitch_duration(quantized, quantized_bin_size,
-                                                             max_hold_bars=max_hold_bars)
+    all_pitches, all_durations = quantized_to_pitch_duration(quantized, quantized_bin_size, hold_symbol, max_hold_bars=max_hold_bars)
     pitches_and_durations_to_pretty_midi(all_pitches, all_durations,
                                          save_dir=save_dir,
                                          name_tag=name_tag,
@@ -916,6 +923,7 @@ def quantized_to_pretty_midi(quantized,
                                          lower_pitch_limit=lower_pitch_limit,
                                          list_of_quarter_length=list_of_quarter_length,
                                          default_quarter_length=default_quarter_length,
+                                         default_resolution=default_resolution,
                                          voice_params=voice_params)
 
 
@@ -1345,7 +1353,7 @@ def plot_pitches_and_durations(pitches, durations,
             print("Error writing index {}, continuing...".format(n))
         """
 
-def music21_to_chord_duration(p):
+def music21_to_chord_duration(p, key):
     """
     Takes in a Music21 score, and outputs three lists
     List for chords (by primeFormString string name)
@@ -1358,10 +1366,13 @@ def music21_to_chord_duration(p):
     chord_function_list = []
     duration_list = []
     for ch in p_chords_o:
-        chord_list.append(ch.primeFormString)
         duration_list.append(ch.duration.quarterLength)
         ch.closedPosition(forceOctave=4, inPlace=True)
-        chord_function_list.append(roman.romanNumeralFromChord(ch).figure)
+        rn = roman.romanNumeralFromChord(ch, key)
+        rp = rn.pitches
+        rp_names = ",".join([pi.name + pi.unicodeNameWithOctave[-1] for pi in rp])
+        chord_list.append(rp_names)
+        chord_function_list.append(rn.figure)
     return chord_list, chord_function_list, duration_list
 
 
@@ -1427,9 +1438,9 @@ def ribbons_from_piano_roll(piano_roll, ribbon_type, quantized_bin_size,
     from IPython import embed; embed(); raise ValueErro
 
 
-def piano_roll_imlike_to_image_array(piano_roll_as_imarray, quantized_bin_size,
-                                     plot_colors="default",
-                                     background="white"):
+def quantized_imlike_to_image_array(piano_roll_as_imarray, quantized_bin_size,
+                                    plot_colors="default",
+                                    background="white"):
     """
     piano_roll_as_imarray should be N H W C
     """
