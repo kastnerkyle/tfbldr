@@ -21,7 +21,8 @@ parser.add_argument('pixelcnn_model', nargs=1, default=None)
 parser.add_argument('vqvae_model', nargs=1, default=None)
 parser.add_argument('--seed', dest='seed', type=int, default=1999)
 parser.add_argument('--temp', dest='temp', type=float, default=1.)
-parser.add_argument('--chords', dest='chords', type=str, default=None)
+parser.add_argument('--chords', dest='chords', type=str, default=None,
+                    help="Example, `--chords=I,I6,IV,V7,I`")
 args = parser.parse_args()
 vqvae_model_path = args.vqvae_model[0]
 pixelcnn_model_path = args.pixelcnn_model[0]
@@ -34,23 +35,34 @@ d = np.load("vq_vae_encoded_music_2d_subroll_multichannel.npz")
 
 offset_to_pitch = {int(k): int(v) for k, v in d["offset_to_pitch_kv"]}
 label_to_chord_function = {int(k): v for k, v in d["label_to_chord_function_kv"]}
+chord_function_to_label = {v: k for k, v in label_to_chord_function.items()}
 
 labels = d["labels"]
 train_labels = labels[:-500]
 valid_labels = labels[-500:]
 sample_labels = valid_labels
 
-"""
-if args.chords != None:
-    raise ValueError("")
-    chordseq = args.chords.split(",")
-    if len(chordseq) < 3:
-        raise ValueError("Provided chords length < 3, need at least 3 chords separated by spaces! Example: --chords=I7,IV7,V7,I7 . Got {}".format(args.chords))
-    ch =  [cs for cs in args.chords.split(",")]
-    clbl = [full_chords_lu[cs] for cs in ch]
-    stretched = clbl * (num_to_generate // len(clbl) + 1)
-    sample_labels = np.array(stretched[:len(sample_labels)])[:, None]
-"""
+if args.chords is not None:
+    chord_labels = []
+    chord_seq = args.chords.split(",")
+    prev = None
+    for n, chs in enumerate(chord_seq):
+        if chs not in chord_function_to_label:
+            print("Possible chords {}".format(sorted(chord_function_to_label.keys())))
+            raise ValueError("Unable to find chord {} in chord set".format(chs))
+        cur = chord_function_to_label[chs]
+        if prev == None:
+            prev = cur
+        if n == (len(chord_seq) - 1):
+            nxt = cur
+        else:
+            nxt = chord_function_to_label[chord_seq[n + 1]]
+        chord_labels.append((prev, cur, nxt))
+    chord_labels = chord_labels * 5
+    num_to_generate = len(chord_labels)
+    num_each = len(chord_seq)
+    sample_labels = np.array(chord_labels)
+
 
 def sample_gumbel(logits, temperature=args.temp):
     noise = random_state.uniform(1E-5, 1. - 1E-5, np.shape(logits))
@@ -71,7 +83,7 @@ with tf.Session(config=config) as sess1:
     )
     y = sample_labels[:num_to_generate]
 
-    pix_z = np.zeros((num_to_generate, 12, 8))
+    pix_z = np.zeros((num_to_generate, 12, 4))
     for i in range(pix_z.shape[1]):
         for j in range(pix_z.shape[2]):
             print("Sampling v completion pixel {}, {}".format(i, j))
@@ -106,7 +118,7 @@ with tf.Session(config=config) as sess2:
         *[tf.get_collection(name)[0] for name in fields]
     )
     z_i = pix_z[:num_to_generate]
-    fake_image_data = np.zeros((num_to_generate, 48, 32, 4))
+    fake_image_data = np.zeros((num_to_generate, 48, 16, 4))
     feed = {vs.images: fake_image_data,
             vs.z_i_x: z_i,
             vs.bn_flag: 1.}
@@ -118,5 +130,5 @@ with tf.Session(config=config) as sess2:
 x_rec[x_rec > 0.5] = 1.
 x_rec[x_rec <= 0.5] = 0.
 
-dump_subroll_samples(x_rec, sample_labels, num_each, args.seed, args.temp, offset_to_pitch, label_to_chord_function)
+dump_subroll_samples(x_rec, sample_labels, num_each, args.seed, args.temp, args.chords, offset_to_pitch, label_to_chord_function)
 from IPython import embed; embed(); raise ValueError()

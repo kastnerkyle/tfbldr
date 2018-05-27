@@ -121,7 +121,7 @@ def create_vqvae(inp, bn):
 def create_graph():
     graph = tf.Graph()
     with graph.as_default():
-        images = tf.placeholder(tf.float32, shape=[None, 48, 32, 4])
+        images = tf.placeholder(tf.float32, shape=[None, 48, 16, 4])
         bn_flag = tf.placeholder_with_default(tf.zeros(shape=[]), shape=[])
         x_tilde, z_e_x, z_q_x, z_i_x, z_nst_q_x, z_emb = create_vqvae(images, bn_flag)
         l1 = tf.reduce_mean(BernoulliCrossEntropyCost(x_tilde[..., 0][..., None], images[..., 0][..., None]))

@@ -7,7 +7,7 @@ from collections import Counter
 import os
 import copy
 
-def dump_subroll_samples(x_rec, sample_labels, num_each, seed, temp, offset_to_pitch_map, label_to_chord_function_map):
+def dump_subroll_samples(x_rec, sample_labels, num_each, seed, temp, chords, offset_to_pitch_map, label_to_chord_function_map):
     for offset in np.arange(0, len(x_rec), num_each):
         x_rec_i = x_rec[offset:offset + num_each]
         x_ts = quantized_imlike_to_image_array(x_rec_i, 0.25)
@@ -15,13 +15,16 @@ def dump_subroll_samples(x_rec, sample_labels, num_each, seed, temp, offset_to_p
         if not os.path.exists("samples"):
             os.mkdir("samples")
 
-        save_image_array(x_ts, "samples/subroll_multichannel_pixel_cnn_gen_{}_seed_{}_temp_{}.png".format(offset, seed, temp), resize_multiplier=(4, 1), gamma_multiplier=7, flat_wide=True)
+        if chords is None:
+            save_image_array(x_ts, "samples/subroll_multichannel_pixel_cnn_gen_{:04d}_seed_{:04d}_temp_{}.png".format(offset, seed, temp), resize_multiplier=(4, 1), gamma_multiplier=7, flat_wide=True)
+        else:
+            save_image_array(x_ts, "samples/subroll_multichannel_pixel_cnn_chords_{}_gen_{:04d}_seed_{:04d}_temp_{}.png".format(chords, offset, seed, temp), resize_multiplier=(4, 1), gamma_multiplier=7, flat_wide=True)
 
         satb_midi = [[], [], [], []]
         satb_notes = [[], [], [], []]
         for n in range(len(x_rec_i)):
             measure_len = x_rec_i[n].shape[1]
-            # 46 x 32 2 measures in
+            # 46 x 16 2 measures in
             events = {}
             for v in range(x_rec_i.shape[-1]):
                 all_up = zip(*np.where(x_rec_i[n][..., v]))
@@ -46,23 +49,29 @@ def dump_subroll_samples(x_rec, sample_labels, num_each, seed, temp, offset_to_p
                 satb_midi[i].extend(satb[i])
                 satb_notes[i].extend(midi_to_notes([satb[i]])[0])
 
-        name_tag="subroll_multichannel_sample_{}_seed_{}_temp_{}".format(offset, seed, temp) + "_{}.mid"
+        if chords is None:
+            name_tag="subroll_multichannel_sample_{:04d}_seed_{:04d}_temp_{}".format(offset, seed, temp) + "_{}.mid"
+        else:
+            name_tag="subroll_multichannel_chords_{}_sample_{:04d}_seed_{:04d}_temp_{}".format(chords, offset, seed, temp) + "_{}.mid"
 
         these_sample_labels = sample_labels[offset:offset + num_each]
         these_labelnames = [tuple([label_to_chord_function_map[sl] for sl in sli]) for sli in these_sample_labels]
 
-        np.savez("samples/sample_{}_seed_{}.npz".format(offset, seed), pr=x_rec_i, midi=satb_midi, notes=satb_notes, labelnames=these_labelnames)
+        if chords is None:
+            np.savez("samples/sample_{:04d}_seed_{:04d}.npz".format(offset, seed), pr=x_rec_i, midi=satb_midi, notes=satb_notes, labelnames=these_labelnames)
+        else:
+            np.savez("samples/chords_{:04d}_seed_{:04d}.npz".format(chords, offset, seed), pr=x_rec_i, midi=satb_midi, notes=satb_notes, labelnames=these_labelnames)
+        # http://www.janvanbiezen.nl/18century.html
         quantized_to_pretty_midi([satb_midi],
                                  0.25,
                                  save_dir="samples",
                                  name_tag=name_tag,
-                                 default_quarter_length=70,
+                                 default_quarter_length=60,
                                  voice_params="woodwinds")
         print("saved sample {}".format(offset))
 
 
 def music_pitch_and_chord_to_imagelike_and_label(music_dict, augment=False):
-    # make frames and chord labels in groups of 32, with overlap
     all_quantized_16th_pitches = music_dict["list_of_data_quantized_16th_pitches_no_hold"]
     all_quantized_16th_chord_functions = music_dict["list_of_data_quantized_16th_chord_functions"]
     if augment:
@@ -94,7 +103,7 @@ def music_pitch_and_chord_to_imagelike_and_label(music_dict, augment=False):
         total_len = len(qp)
         # 2 bars at a time, stepping by 1 bar at a time
         step = 16
-        size = 32
+        size = 16
         pos = np.arange(0, total_len, step)
         pos = pos[(pos + size) <  total_len]
         assert len(pos) > 1
