@@ -7,7 +7,7 @@ from collections import Counter
 import os
 import copy
 
-def dump_subroll_samples(x_rec, sample_labels, num_each, seed, temp, chords, offset_to_pitch_map, label_to_chord_function_map):
+def dump_subroll_samples(x_rec, sample_labels, num_each, seed, temp, chords, offset_to_pitch_map, label_to_chord_function_map, tag=""):
     for offset in np.arange(0, len(x_rec), num_each):
         x_rec_i = x_rec[offset:offset + num_each]
         x_ts = quantized_imlike_to_image_array(x_rec_i, 0.25)
@@ -16,9 +16,9 @@ def dump_subroll_samples(x_rec, sample_labels, num_each, seed, temp, chords, off
             os.mkdir("samples")
 
         if chords is None:
-            save_image_array(x_ts, "samples/subroll_multichannel_pixel_cnn_gen_{:04d}_seed_{:04d}_temp_{}.png".format(offset, seed, temp), resize_multiplier=(4, 1), gamma_multiplier=7, flat_wide=True)
+            save_image_array(x_ts, "samples/subroll_{}_multichannel_pixel_cnn_gen_{:04d}_seed_{:04d}_temp_{}.png".format(tag, offset, seed, temp), resize_multiplier=(4, 1), gamma_multiplier=7, flat_wide=True)
         else:
-            save_image_array(x_ts, "samples/subroll_multichannel_pixel_cnn_chords_{}_gen_{:04d}_seed_{:04d}_temp_{}.png".format(chords, offset, seed, temp), resize_multiplier=(4, 1), gamma_multiplier=7, flat_wide=True)
+            save_image_array(x_ts, "samples/subroll_{}_multichannel_pixel_cnn_chords_{}_gen_{:04d}_seed_{:04d}_temp_{}.png".format(tag, chords, offset, seed, temp), resize_multiplier=(4, 1), gamma_multiplier=7, flat_wide=True)
 
         satb_midi = [[], [], [], []]
         satb_notes = [[], [], [], []]
@@ -50,17 +50,17 @@ def dump_subroll_samples(x_rec, sample_labels, num_each, seed, temp, chords, off
                 satb_notes[i].extend(midi_to_notes([satb[i]])[0])
 
         if chords is None:
-            name_tag="subroll_multichannel_sample_{:04d}_seed_{:04d}_temp_{}".format(offset, seed, temp) + "_{}.mid"
+            name_tag="subroll_{}_multichannel_sample_{:04d}_seed_{:04d}_temp_{}".format(tag, offset, seed, temp) + "_{}.mid"
         else:
-            name_tag="subroll_multichannel_chords_{}_sample_{:04d}_seed_{:04d}_temp_{}".format(chords, offset, seed, temp) + "_{}.mid"
+            name_tag="subroll_{}_multichannel_chords_{}_sample_{:04d}_seed_{:04d}_temp_{}".format(tag, chords, offset, seed, temp) + "_{}.mid"
 
         these_sample_labels = sample_labels[offset:offset + num_each]
         these_labelnames = [tuple([label_to_chord_function_map[sl] for sl in sli]) for sli in these_sample_labels]
 
         if chords is None:
-            np.savez("samples/sample_{:04d}_seed_{:04d}.npz".format(offset, seed), pr=x_rec_i, midi=satb_midi, notes=satb_notes, labelnames=these_labelnames)
+            np.savez("samples/{}_sample_{:04d}_seed_{:04d}.npz".format(tag, offset, seed), pr=x_rec_i, midi=satb_midi, notes=satb_notes, labelnames=these_labelnames)
         else:
-            np.savez("samples/chords_{}_sample_{:04d}_seed_{:04d}.npz".format(chords, offset, seed), pr=x_rec_i, midi=satb_midi, notes=satb_notes, labelnames=these_labelnames)
+            np.savez("samples/{}_chords_{}_sample_{:04d}_seed_{:04d}.npz".format(tag, chords, offset, seed), pr=x_rec_i, midi=satb_midi, notes=satb_notes, labelnames=these_labelnames)
         # http://www.janvanbiezen.nl/18century.html
         quantized_to_pretty_midi([satb_midi],
                                  0.25,
@@ -68,6 +68,8 @@ def dump_subroll_samples(x_rec, sample_labels, num_each, seed, temp, chords, off
                                  name_tag=name_tag,
                                  default_quarter_length=60,
                                  voice_params="woodwinds")
+                                 #voice_params="harpsichord")
+                                 #voice_params="legend")
         print("saved sample {}".format(offset))
 
 

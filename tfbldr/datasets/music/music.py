@@ -703,14 +703,14 @@ def pitches_and_durations_to_pretty_midi(pitches, durations,
     elif voice_params == "nylon":
         voice_mappings = ["Acoustic Guitar (nylon)"] * 4
         voice_velocity = [20, 16, 25, 10]
-        voice_offset = [0, 0, 0, -12]
+        voice_offset = [0, 0, 0, 0]
         voice_decay = [1., 1., 1., 1.]
         voice_decay = voice_decay[::-1]
     elif voice_params == "legend":
         # LoZ
         voice_mappings = ["Acoustic Guitar (nylon)"] * 3 + ["Pan Flute"]
         voice_velocity = [20, 16, 25, 5]
-        voice_offset = [0, 0, 0, -12]
+        voice_offset = [0, 0, 0, 24]
         voice_decay = [1., 1., 1., .95]
     elif voice_params == "organ":
         voice_mappings = ["Church Organ"] * 4
