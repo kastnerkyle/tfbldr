@@ -20,7 +20,8 @@ words = norvig["data"]
 maxlen = max([len(words_i) for words_i in words])
 word_length_limit = 10
 words = [words_i for words_i in words if len(words_i) <= word_length_limit]
-vocab = "_0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+#vocab = "_0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+vocab = "_0123456789abcdefghijklmnopqrstuvwxyz"
 v2i = {v: k for k, v in enumerate(vocab)}
 i2v = {v: k for k, v in v2i.items()}
 word_inds = [np.array([v2i[wi] for wi in word_i] + [0] * (word_length_limit - len(word_i)))[..., None] for word_i in words]
@@ -75,9 +76,8 @@ def create_graph():
     graph = tf.Graph()
     with graph.as_default():
         inputs = tf.placeholder(tf.float32, shape=[word_length_limit, batch_size, 1])
-        #inputs_masks = tf.placeholder(tf.float32, shape=[word_length_limit, batch_size])
-        outputs = tf.placeholder(tf.float32, shape=[word_length_limit + 1, batch_size, 1])
-        outputs_masks = tf.placeholder(tf.float32, shape=[word_length_limit + 1, batch_size])
+        outputs = tf.placeholder(tf.float32, shape=[word_length_limit, batch_size, 1])
+        outputs_masks = tf.placeholder(tf.float32, shape=[word_length_limit, batch_size])
         pred_logits, enc_atts, dec_atts = create_model(inputs, outputs)
         loss_i = CategoricalCrossEntropyLinearIndexCost(pred_logits, outputs)
         loss = tf.reduce_sum(outputs_masks * loss_i) / tf.reduce_sum(outputs_masks)
@@ -112,12 +112,14 @@ def loop(sess, itr, extras, stateful_args):
     x, y = itr.next_batch()
     x = x.transpose(1, 0, 2)
     y = y.transpose(1, 0, 2)
-    new_y = np.zeros((y.shape[0] + 1, y.shape[1], y.shape[2]))
-    new_y[1:] = y
-    y_mask = np.zeros((y.shape[0] + 1, y.shape[1], y.shape[2]))
-    y_mask[new_y > 0] = 1.
-    y_mask[0] = 1.
-    y = new_y
+    #new_y = np.zeros((y.shape[0] + 1, y.shape[1], y.shape[2]))
+    #new_y[1:] = y
+    y_mask = np.zeros((y.shape[0], y.shape[1], y.shape[2]))
+    #y_mask[new_y > 0] = 1.
+    y_mask[y > 0] = 1.
+    #y_mask[0] = 1.
+    y_mask = y_mask[..., 0]
+    #y = new_y
     if extras["train"]:
         feed = {vs.inputs: x,
                 vs.outputs: y,
@@ -139,6 +141,6 @@ with tf.Session(graph=g) as sess:
     run_loop(sess,
              loop, train_itr,
              loop, valid_itr,
-             n_steps=100000,
+             n_steps=50000,
              n_train_steps_per=5000,
              n_valid_steps_per=5000)

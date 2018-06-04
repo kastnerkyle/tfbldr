@@ -577,8 +577,11 @@ def MultiheadAttention(value, key, query, output_dim, n_heads=8, mask=False, ran
         scores = tf.matmul(q, kt) / np.sqrt(d)
         if mask:
             diag_vals = tf.ones_like(scores[0, 0, :, :])
-            tril = tf.linalg.LinearOperatorLowerTriangular(diag_vals).to_dense() # (q_dim, k_dim)
-            scores = tril[None, None, :, :] * scores
+            tril = tf.linalg.LinearOperatorLowerTriangular(diag_vals).to_dense()
+            triu = tf.abs(1. - tril)
+            # get rid of diagonal
+            tri = tril * triu
+            scores = tri[None, None, :, :] * scores
         pp = tf.nn.softmax(scores, axis=-1)
         res = tf.transpose(tf.matmul(pp, v), (2, 0, 1, 3))
         return res, pp
@@ -605,7 +608,7 @@ def TransformerBlock(value_and_passthrough, key, query, output_dim, n_heads=8, m
     if mask:
         mask_att_proj1, mask_att1 = MultiheadAttention(value, value, value, output_dim, n_heads=n_heads, mask=True, random_state=random_state, name=name + "transformerblock_maskmhatt")
         mo1 = LayerNorm(value + mask_att_proj1, name=name + "transformerblock_maskmhln")
-        value = mo1
+        query = mo1
 
     att_proj1, att1 = MultiheadAttention(value, key, query, output_dim, n_heads=n_heads, mask=False, random_state=random_state, name=name + "transformerblock_mhatt")
     o1 = LayerNorm(query + att_proj1, name=name + "transformerblock_mhln")
