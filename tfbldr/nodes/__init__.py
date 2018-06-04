@@ -8,7 +8,11 @@ from .nodes import Conv2d
 from .nodes import GatedMaskedConv2d
 from .nodes import ConvTranspose2d
 from .nodes import BatchNorm2d
+from .nodes import LayerNorm
 from .nodes import Embedding
+from .nodes import PositionalEncoding
+from .nodes import TransformerBlock
+from .nodes import MultiheadAttention
 from .nodes import Bilinear
 from .nodes import VqEmbedding
 from .nodes import SimpleRNNCell

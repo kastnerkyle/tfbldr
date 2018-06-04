@@ -475,10 +475,7 @@ def Embedding(indices, n_symbols, output_dim, random_state=None,
     nd = len(shp)
     lu = tf.nn.embedding_lookup(vectors, ii)
     if nd == 3:
-        print("nd3 check in embedding")
-        from IPython import embed; embed(); raise ValueError()
         lu = lu[:, :, 0]
-        lu = lu[:, 0]
     elif nd == 2:
         lu = lu[:, 0]
     elif nd == 4:
@@ -486,6 +483,27 @@ def Embedding(indices, n_symbols, output_dim, random_state=None,
     else:
         raise ValueError("Input dimension not handled, Embedding input shape {} results in shape {}".format(shp, _shape(lu)))
     return lu, vectors
+
+
+def PositionalEncoding(indices, n_symbols, output_dim, max_len=500, cycle_scale=10000, random_state=None,
+                       init="embedding_normal", scale=1., strict=None, name=None):
+    pos_name = name + "_pos_cyclic"
+    emb_name = name + "_embedding"
+
+    def sincos(x, i):
+        if i % 2 == 0:
+            return np.sin(x)
+        return np.cos(x)
+
+    pe = tf.convert_to_tensor([sincos(pos / (cycle_scale ** (2 * i / float(output_dim))), i)
+                               for pos in range(1, max_len + 1)
+                               for i in range(1, output_dim + 1)])
+    pe = tf.reshape(pe, [-1, max_len, output_dim])
+    pe = tf.transpose(pe, [1, 0, 2])
+
+    e_inds, emb = Embedding(indices, n_symbols, output_dim, random_state=random_state,
+                            init=init, scale=scale, strict=strict, name=emb_name)
+    return tf.add(e_inds, pe[:indices.shape[0]]), emb
 
 
 def Bilinear(left_input, left_dim, right_input, right_dim, random_state=None,
@@ -523,6 +541,79 @@ def Bilinear(left_input, left_dim, right_input, right_dim, random_state=None,
         out = dot(lp, tf.transpose(right_input, (1, 0)))
     out = tf.identity(out, name=name_out)
     return out
+
+
+def MultiheadAttention(value, key, query, output_dim, n_heads=8, mask=False, random_state=None,
+                       name=None, init=None, scale="default", biases=True, bias_offset=0.,
+                       strict=None):
+    if name is None:
+        name = _get_name()
+
+    d_k = _shape(key)[-1]
+    assert d_k % n_heads == 0
+    p_dim = d_k // n_heads
+    proj_k_name = name + "mheadatt_split_k"
+    proj_v_name = name + "mheadatt_split_v"
+    proj_q_name = name + "mheadatt_split_q"
+    proj_o_name = name + "mheadatt_split_o"
+    def l2a(x):
+        ss = _shape(x)[:2] + [p_dim, n_heads]
+        return tf.transpose(tf.reshape(x, ss), (0, 1, 3, 2))
+    kr = Linear([key], [d_k], output_dim, random_state=random_state,
+           name=proj_k_name, init=init, scale=scale, biases=biases, bias_offset=bias_offset,
+           strict=strict)
+    qr = Linear([query], [d_k], output_dim, random_state=random_state,
+           name=proj_v_name, init=init, scale=scale, biases=biases, bias_offset=bias_offset,
+           strict=strict)
+    vr = Linear([value], [d_k], output_dim, random_state=random_state,
+           name=proj_q_name, init=init, scale=scale, biases=biases, bias_offset=bias_offset,
+           strict=strict)
+    ks = l2a(kr)
+    qs = l2a(qr)
+    vs = l2a(vr)
+    def kq_attention(q, k, v, mask=False):
+        d = _shape(k)[-1]
+        kt = tf.transpose(k, (0, 1, 3, 2))
+        scores = tf.matmul(q, kt) / np.sqrt(d)
+        if mask:
+            diag_vals = tf.ones_like(scores[0, 0, :, :])
+            tril = tf.linalg.LinearOperatorLowerTriangular(diag_vals).to_dense() # (q_dim, k_dim)
+            scores = tril[None, None, :, :] * scores
+        pp = tf.nn.softmax(scores, axis=-1)
+        res = tf.transpose(tf.matmul(pp, v), (2, 0, 1, 3))
+        return res, pp
+
+    ks = tf.transpose(ks, (1, 2, 0, 3))
+    qs = tf.transpose(qs, (1, 2, 0, 3))
+    vs = tf.transpose(vs, (1, 2, 0, 3))
+    r, att = kq_attention(qs, ks, vs, mask=mask)
+    ss = _shape(r)[:2] + [p_dim, n_heads]
+    rf = tf.reshape(r, ss[:2] + [output_dim])
+    out = Linear([rf], [output_dim], output_dim, random_state=random_state,
+                 name=proj_o_name, init=init, scale=scale, biases=biases, bias_offset=bias_offset,
+           strict=strict)
+    return out, att
+
+
+def TransformerBlock(value_and_passthrough, key, query, output_dim, n_heads=8, mask=False, random_state=None, name=None):
+    if random_state is None:
+        raise ValueError("Must pass instance of np.random.RandomState!")
+
+    if name is None:
+        name = _get_name()
+    value = value_and_passthrough
+    if mask:
+        mask_att_proj1, mask_att1 = MultiheadAttention(value, value, value, output_dim, n_heads=n_heads, mask=True, random_state=random_state, name=name + "transformerblock_maskmhatt")
+        mo1 = LayerNorm(value + mask_att_proj1, name=name + "transformerblock_maskmhln")
+        value = mo1
+
+    att_proj1, att1 = MultiheadAttention(value, key, query, output_dim, n_heads=n_heads, mask=False, random_state=random_state, name=name + "transformerblock_mhatt")
+    o1 = LayerNorm(query + att_proj1, name=name + "transformerblock_mhln")
+
+    l1 = Linear([o1], [output_dim], 4 * output_dim, random_state=random_state, name=name + "transformerblock_iff")
+    rl1 = ReLU(l1)
+    l2 = Linear([rl1], [4 * output_dim], output_dim, random_state=random_state, name=name + "transformerblock_off")
+    return LayerNorm(o1 + l2, name=name + "transformerblock_ffln"), att1
 
 
 def Linear(list_of_inputs, list_of_input_dims, output_dim, random_state=None,
@@ -931,7 +1022,6 @@ def GatedMaskedConv2d(list_of_v_inputs, list_of_v_input_dims,
     return out_v, out_h
 
 
-
 def ConvTranspose2d(list_of_inputs, list_of_input_dims, num_feature_maps,
                     kernel_size=(3, 3),
                     strides=None,
@@ -1060,6 +1150,48 @@ def ConvTranspose2d(list_of_inputs, list_of_input_dims, num_feature_maps,
         out = out + biases[None, None, None]
     out = tf.identity(out, name=name_out)
     return out
+
+
+def LayerNorm(input_tensor,
+              gamma_init=1., beta_init=0.,
+              eps=1E-6,
+              strict=None,
+              name=None):
+    if name is None:
+        name = _get_name()
+
+    if strict is None:
+        strict = get_strict_mode_default()
+
+    name_scale = name + "_layernorm_s"
+    name_beta = name + "_layernorm_b"
+
+    if strict:
+        cur_defs = get_params_dict()
+        if name_scale in cur_defs:
+            raise ValueError("Name {} already created in params dict!".format(name_scale))
+
+        if name_beta in cur_defs:
+            raise ValueError("Name {} already created in params dict!".format(name_beta))
+
+    try:
+        scale = _get_shared(name_scale)
+    except NameError:
+        scale = tf.Variable(gamma_init * tf.ones([input_tensor.get_shape()[-1]]), trainable=True, name=name_scale)
+        _set_shared(name_scale, scale)
+
+    try:
+        beta = _get_shared(name_beta)
+    except NameError:
+        beta = tf.Variable(beta_init * tf.ones([input_tensor.get_shape()[-1]]), trainable=True, name=name_beta)
+        _set_shared(name_beta, beta)
+
+    im, istd = tf.nn.moments(input_tensor, [-1])
+    im = im[..., None]
+    istd = istd[..., None]
+    nm = ((input_tensor - im) / (istd + eps))
+    r = scale * nm + beta
+    return r
 
 
 def BatchNorm2d(input_tensor, train_test_flag,
