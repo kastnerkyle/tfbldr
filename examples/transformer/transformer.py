@@ -75,12 +75,22 @@ def create_model(inp, out):
 def create_graph():
     graph = tf.Graph()
     with graph.as_default():
+        # THIS ONE HAS TO HAVE SHAPE
         inputs = tf.placeholder(tf.float32, shape=[word_length_limit, batch_size, 1])
-        outputs = tf.placeholder(tf.float32, shape=[word_length_limit, batch_size, 1])
-        outputs_masks = tf.placeholder(tf.float32, shape=[word_length_limit, batch_size])
+        #outputs = tf.placeholder(tf.float32, shape=[word_length_limit + 1, batch_size, 1])
+        #outputs_masks = tf.placeholder(tf.float32, shape=[word_length_limit + 1, batch_size])
+        # THESE DO NOT
+        outputs = tf.placeholder(tf.float32, shape=[None, batch_size, 1])
+        outputs_masks = tf.placeholder(tf.float32, shape=[None, batch_size])
         pred_logits, enc_atts, dec_atts = create_model(inputs, outputs)
-        loss_i = CategoricalCrossEntropyLinearIndexCost(pred_logits, outputs)
-        loss = tf.reduce_sum(outputs_masks * loss_i) / tf.reduce_sum(outputs_masks)
+        enc_atts_0 = enc_atts[0]
+        enc_atts_1 = enc_atts[1]
+        enc_atts_2 = enc_atts[2]
+        dec_atts_0 = dec_atts[0]
+        dec_atts_1 = dec_atts[1]
+        dec_atts_2 = dec_atts[2]
+        loss_i = CategoricalCrossEntropyLinearIndexCost(pred_logits[:-1], outputs[1:])
+        loss = tf.reduce_sum(outputs_masks[:-1] * loss_i) / tf.reduce_sum(outputs_masks[1:])
 
         params = get_params_dict()
         grads = tf.gradients(loss, params.values())
@@ -95,8 +105,12 @@ def create_graph():
                     "outputs",
                     "outputs_masks",
                     "pred_logits",
-                    "enc_atts",
-                    "dec_atts",
+                    "enc_atts_0",
+                    "enc_atts_1",
+                    "enc_atts_2",
+                    "dec_atts_0",
+                    "dec_atts_1",
+                    "dec_atts_2",
                     "loss",
                     "train_step"]
     things_tf = [eval(tn) for tn in things_names]
@@ -112,14 +126,13 @@ def loop(sess, itr, extras, stateful_args):
     x, y = itr.next_batch()
     x = x.transpose(1, 0, 2)
     y = y.transpose(1, 0, 2)
-    #new_y = np.zeros((y.shape[0] + 1, y.shape[1], y.shape[2]))
-    #new_y[1:] = y
-    y_mask = np.zeros((y.shape[0], y.shape[1], y.shape[2]))
-    #y_mask[new_y > 0] = 1.
-    y_mask[y > 0] = 1.
-    #y_mask[0] = 1.
+    new_y = np.zeros((y.shape[0] + 1, y.shape[1], y.shape[2]))
+    new_y[1:] = y
+    y_mask = np.zeros((y.shape[0] + 1, y.shape[1], y.shape[2]))
+    y_mask[new_y > 0] = 1.
+    y_mask[0] = 1.
     y_mask = y_mask[..., 0]
-    #y = new_y
+    y = new_y
     if extras["train"]:
         feed = {vs.inputs: x,
                 vs.outputs: y,
@@ -141,6 +154,6 @@ with tf.Session(graph=g) as sess:
     run_loop(sess,
              loop, train_itr,
              loop, valid_itr,
-             n_steps=50000,
+             n_steps=20000,
              n_train_steps_per=5000,
-             n_valid_steps_per=5000)
+             n_valid_steps_per=1000)

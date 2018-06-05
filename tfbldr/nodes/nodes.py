@@ -503,7 +503,15 @@ def PositionalEncoding(indices, n_symbols, output_dim, max_len=500, cycle_scale=
 
     e_inds, emb = Embedding(indices, n_symbols, output_dim, random_state=random_state,
                             init=init, scale=scale, strict=strict, name=emb_name)
-    return tf.add(e_inds, pe[:indices.shape[0]]), emb
+
+    # hardcode 3d assumption for now
+    shp = _shape(indices)
+    if len(shp) == 3:
+        faker = tf.ones_like(indices)[:, 0, 0]
+    else:
+        raise ValueError("Currently unsupported input shape {} to PositionalEncoding".format(shp))
+    cl = tf.cast(tf.reduce_sum(faker), tf.int32)
+    return tf.add(e_inds, pe[:cl]), emb
 
 
 def Bilinear(left_input, left_dim, right_input, right_dim, random_state=None,
@@ -545,7 +553,7 @@ def Bilinear(left_input, left_dim, right_input, right_dim, random_state=None,
 
 def MultiheadAttention(value, key, query, output_dim, n_heads=8, mask=False, random_state=None,
                        name=None, init=None, scale="default", biases=True, bias_offset=0.,
-                       strict=None):
+                       strict=None, debug=False):
     if name is None:
         name = _get_name()
 
@@ -572,16 +580,14 @@ def MultiheadAttention(value, key, query, output_dim, n_heads=8, mask=False, ran
     qs = l2a(qr)
     vs = l2a(vr)
     def kq_attention(q, k, v, mask=False):
+        # reverse order of input args just like diagram
         d = _shape(k)[-1]
         kt = tf.transpose(k, (0, 1, 3, 2))
         scores = tf.matmul(q, kt) / np.sqrt(d)
         if mask:
             diag_vals = tf.ones_like(scores[0, 0, :, :])
             tril = tf.linalg.LinearOperatorLowerTriangular(diag_vals).to_dense()
-            triu = tf.abs(1. - tril)
-            # get rid of diagonal
-            tri = tril * triu
-            scores = tri[None, None, :, :] * scores
+            scores = tril[None, None, :, :] * scores + (tf.abs(1. - tril) * -1E9)
         pp = tf.nn.softmax(scores, axis=-1)
         res = tf.transpose(tf.matmul(pp, v), (2, 0, 1, 3))
         return res, pp
@@ -598,16 +604,16 @@ def MultiheadAttention(value, key, query, output_dim, n_heads=8, mask=False, ran
     return out, att
 
 
-def TransformerBlock(value_and_passthrough, key, query, output_dim, n_heads=8, mask=False, random_state=None, name=None):
+def TransformerBlock(value, key, query_and_passthrough, output_dim, n_heads=8, mask=False, random_state=None, name=None, debug=False):
     if random_state is None:
         raise ValueError("Must pass instance of np.random.RandomState!")
 
     if name is None:
         name = _get_name()
-    value = value_and_passthrough
+    query = query_and_passthrough
     if mask:
-        mask_att_proj1, mask_att1 = MultiheadAttention(value, value, value, output_dim, n_heads=n_heads, mask=True, random_state=random_state, name=name + "transformerblock_maskmhatt")
-        mo1 = LayerNorm(value + mask_att_proj1, name=name + "transformerblock_maskmhln")
+        mask_att_proj1, mask_att1 = MultiheadAttention(query, query, query, output_dim, n_heads=n_heads, mask=True, random_state=random_state, name=name + "transformerblock_maskmhatt")
+        mo1 = LayerNorm(query + mask_att_proj1, name=name + "transformerblock_maskmhln")
         query = mo1
 
     att_proj1, att1 = MultiheadAttention(value, key, query, output_dim, n_heads=n_heads, mask=False, random_state=random_state, name=name + "transformerblock_mhatt")
