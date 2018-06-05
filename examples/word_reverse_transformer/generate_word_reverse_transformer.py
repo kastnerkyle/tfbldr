@@ -111,8 +111,8 @@ with tf.Session(config=config) as sess:
                 vs.dec_atts_2]
         r = sess.run(outs, feed_dict=feed)
         res = r[0]
-        amax_pred = np.argmax(res, axis=-1)
-        outputs[i, :, 0] = amax_pred[i - 1].ravel() #y[i].ravel()
+        amax_pred = np.argmax(res, axis=-1)[i - 1].ravel()
+        outputs[i, :, 0] = amax_pred
 
     for mbi in range(outputs.shape[1]):
         y_i = y[:, mbi].ravel().astype("int32")
@@ -128,5 +128,6 @@ with tf.Session(config=config) as sess:
             o_cut = o_cut[1]
         # 0th is always "_"
         o_s = o_s[1:o_cut]
-        errs = sum([o_s[i] != y_s[i] for i in range(len(o_s))])
+        # error count will underestimate
+        errs = sum([o_s[i] != y_s[i] for i in range(len(y_s)) if i < len(o_s) and i < len(y_s)])
         print("Element {}: x {} | y {} | out {} | err {}".format(mbi, x_s, y_s, o_s, errs))
