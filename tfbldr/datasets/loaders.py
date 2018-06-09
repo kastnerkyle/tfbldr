@@ -604,7 +604,7 @@ def check_fetch_fruitspeech():
 
 
 def fetch_fruitspeech(fftsize=512, step=16, mean_normalize=True,
-                      real=False, compute_onesided=True):
+                      real=False, compute_onesided=False):
     audio_path = check_fetch_fruitspeech()
     files = sorted([audio_path + os.sep + f for f in os.listdir(audio_path) if f.endswith(".wav")])
     specgrams = []

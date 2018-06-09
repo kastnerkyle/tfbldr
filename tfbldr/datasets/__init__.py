@@ -11,8 +11,6 @@ from .iterators import ordered_list_iterator
 from .iterators import tbptt_list_iterator
 from .iterators import tbptt_file_list_iterator
 from .iterators import char_textfile_iterator
-from .audio import soundsc
-from .audio import stft
 
 from ..core import get_logger
 logger = get_logger()
