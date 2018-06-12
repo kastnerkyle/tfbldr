@@ -651,3 +651,26 @@ def make_sinewaves(n_timesteps, n_waves, base_freq=3, offset=True,
         full_sines[full_sines > square_thresh] = 1
     full_sines = full_sines[:, :, None]
     return full_sines
+
+
+def check_fetch_norvig_words():
+    partial_path = get_tfbldr_dataset_dir("norvig_words")
+    full_path = partial_path + os.sep + "count_1w.txt"
+    if not os.path.exists(full_path):
+        logger.info("{} not found, downloading...".format(full_path))
+        download("https://norvig.com/ngrams/count_1w.txt", full_path)
+    return partial_path
+
+
+def fetch_norvig_words():
+    # https://norvig.com/ngrams/count_1w.txt
+    words_path = check_fetch_norvig_words()
+
+    words_file = words_path + os.sep + "count_1w.txt"
+    with open(words_file, "r") as f:
+        lines = f.readlines()
+    words = [l.split("\t")[0] for l in lines] 
+    words = sorted(words)[::-1]
+    d = {}
+    d["data"] = words
+    return d

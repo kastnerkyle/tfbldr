@@ -9,3 +9,4 @@ from .audio_tools import mu_law_decode
 from .audio_tools import mu_law_transform
 from .audio_tools import mu_law_inverse
 from .audio_tools import fetch_sample_speech_tapestry
+from .datasets import wavfile_caching_mel_tbptt_iterator
