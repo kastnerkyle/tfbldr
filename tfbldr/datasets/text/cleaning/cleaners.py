@@ -17,8 +17,27 @@ from unidecode import unidecode
 from .numbers import normalize_numbers
 
 
-# Regular expression matching whitespace:
 _whitespace_re = re.compile(r'\s+')
+_apos_s_re = re.compile(r"'s")
+_single_re = re.compile(r'["]')
+_double_re = re.compile(r"[']")
+_semicolon_re = re.compile(r';')
+_paren_re = re.compile(r'[()]')
+_bracket_re = re.compile(r'[\[\]]')
+_dash_re = re.compile(r'--')
+_comma_re = re.compile(r' , ')
+_colon_re = re.compile(r':')
+_period_re = re.compile(r'\.$')
+_abbrev_re = re.compile(r'\.')
+_US_re = re.compile(r' US')
+_UK_re = re.compile(r' UK')
+_FBI_re = re.compile(r' FBI')
+_CIA_re = re.compile(r' CIA')
+_NSA_re = re.compile(r' NSA')
+_USA_re = re.compile(r' USA')
+_USSR_re = re.compile(r' USSR')
+
+# handle 22 -> 22nd???
 
 # List of (regular expression, replacement) pairs for abbreviations:
 _abbreviations = [(re.compile('\\b%s\\.' % x[0], re.IGNORECASE), x[1]) for x in [
@@ -54,6 +73,12 @@ def expand_numbers(text):
 
 
 def lowercase(text):
+  text = re.sub(_USSR_re, ' U S S R', text)
+  text = re.sub(_USA_re, ' U S A', text)
+  text = re.sub(_US_re, ' U S', text)
+  text = re.sub(_UK_re, ' U K', text)
+  text = re.sub(_FBI_re, ' F B I', text)
+  text = re.sub(_CIA_re, ' C I A', text)
   return text.lower()
 
 
@@ -62,7 +87,24 @@ def collapse_whitespace(text):
 
 
 def convert_to_ascii(text):
-  return unidecode(text)
+  unicode_content = text.decode('utf-8')
+  return unidecode(unicode_content)
+
+
+def collapse_spurious(text):
+  text = re.sub(_apos_s_re, "-s", text)
+  text = re.sub(_single_re, "", text)
+  text = re.sub(_double_re, "", text)
+  text = re.sub(_paren_re, "", text)
+  text = re.sub(_semicolon_re, ",", text)
+  text = re.sub(_dash_re, ",", text)
+  text = re.sub(_colon_re, ", ", text)
+  text = re.sub(_period_re, "", text)
+  text = re.sub(_bracket_re, "", text)
+  text = re.sub(_abbrev_re, " ", text)
+  text = re.sub(_comma_re, ", ", text)
+  text = re.sub(_comma_re, ", ", text)
+  return text
 
 
 def basic_cleaners(text):
@@ -86,5 +128,6 @@ def english_cleaners(text):
   text = lowercase(text)
   text = expand_numbers(text)
   text = expand_abbreviations(text)
+  text = collapse_spurious(text)
   text = collapse_whitespace(text)
   return text

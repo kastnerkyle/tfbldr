@@ -12,6 +12,10 @@ _id_to_symbol = {i: s for i, s in enumerate(symbols)}
 _curly_re = re.compile(r'(.*?)\{(.+?)\}(.*)')
 
 
+def get_vocabulary_size(cleaner_names):
+  return len(_symbol_to_id)
+
+
 def text_to_sequence(text, cleaner_names):
   '''Converts a string of text to a sequence of IDs corresponding to the symbols in the text.
 

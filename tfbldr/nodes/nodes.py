@@ -1483,6 +1483,13 @@ def LSTMCell(list_of_inputs, list_of_input_dims,
     return final_out, (h, c)
 
 
+def AdditiveGaussianNoise(input_tensor, noise_std_mult, noise_mean=0.0, random_state=None):
+    if random_state is None:
+        raise ValueError("random_state argument is required")
+    noise = tf.random_normal(shape=tf.shape(input_tensor), mean=noise_mean, stddev=1., dtype=tf.float32, seed=random_state.randint(1000000))
+    return input_tensor + noise_std_mult * noise
+
+
 def GaussianAttentionCell(list_of_step_inputs, list_of_step_input_dims,
                           previous_state_list,
                           previous_attention_position,
@@ -1630,6 +1637,15 @@ def DiscreteMixtureOfLogistics(list_of_inputs, list_of_input_dims, n_output_chan
     n_output_channels = int(n_output_channels)
     # assume all the same...
     shp0 = _shape(list_of_inputs[0])
+    if len(shp0) == 3:
+        # can we project these to the right size???
+        list_of_inputs = [tf.transpose(li, (1, 0, 2))[..., None] for li in list_of_inputs]
+        list_of_input_dims = [1] * len(list_of_inputs)
+    elif len(shp0) == 4:
+        pass
+    else:
+        raise ValueError("Unknown behavior for input shape {} in DML".format(shp0))
+    shp0 = _shape(list_of_inputs[0])
     for li in list_of_inputs:
         assert len(shp0) == len(_shape(li))
     if len(shp0) == 4:
@@ -1656,7 +1672,7 @@ def DiscreteMixtureOfLogistics(list_of_inputs, list_of_input_dims, n_output_chan
             # mixtures, means, scales
             return l[..., 2 * boundary:], l[..., :boundary], l[..., boundary:2 * boundary]
     else:
-        raise ValueError("Input shapes have length {}, not currently supported".format(len(shp0)))
+        raise ValueError("Input shapes have length {}, channel_correlations not currently supported".format(len(shp0)))
 
 
 def log_sum_exp(x):
@@ -1695,7 +1711,10 @@ def DiscreteMixtureOfLogisticsCost(in_mixtures, in_means, in_lin_scales, target,
     n_output_channels = int(n_output_channels)
 
     if len(_shape(target)) != 4:
-        raise ValueError("Target shape != 4 currently unsupported")
+        if len(_shape(target)) == 3:
+            target = tf.transpose(target, (1, 0, 2))[..., None]
+        else:
+            raise ValueError("Target shape != 4 currently unsupported")
     # based on https://github.com/openai/weightnorm/blob/master/tensorflow/nn.py#L30
     # original code has 100
     # 10 * 2 * 3 + 3 * 10 + 10

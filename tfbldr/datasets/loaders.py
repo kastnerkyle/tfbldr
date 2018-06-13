@@ -350,11 +350,27 @@ def fetch_iamondb():
     return dataset_storage
 
 
+def fetch_ljspeech(path="/Tmp/kastner/lj_speech/LJSpeech-1.0/"):
+    if not path.endswith(os.sep):
+        path = path + os.sep
+
+    if not os.path.exists(path + "wavs"):
+        e = IOError("No wav files found in {}, under {}".format(path, path + "wavs"), None, path + "wavs")
+        raise e
+    wavfiles = [path + "wavs/" + ff for ff in os.listdir(path + "wavs/")]
+    txtfiles = [path + "txts/" + ff for ff in os.listdir(path + "txts/")]
+    d = {}
+    d["wavfiles"] = wavfiles
+    d["txtfiles"] = txtfiles
+    return d
+
+
+"""
 def check_fetch_ljspeech(conditioning_type):
-    """ Check for ljspeech
+    ''' Check for ljspeech
 
         This dataset cannot be downloaded or preprocessed automatically!
-    """
+    '''
     if conditioning_type == "hybrid":
         partial_path = os.sep + "Tmp" + os.sep + "kastner" + os.sep + "lj_speech_hybrid_speakers"
     else:
@@ -366,11 +382,10 @@ def check_fetch_ljspeech(conditioning_type):
         print("WARNING: {}".format(err.format(partial_path)))
     return partial_path
 
-
 def fetch_ljspeech(conditioning_type="hybrid"):
-    """
+    '''
     only returns file paths, and metadata/conversion routines
-    """
+    '''
     partial_path = check_fetch_ljspeech(conditioning_type)
     features_path = os.path.join(partial_path, "numpy_features")
     norm_path = os.path.join(partial_path, "norm_info")
@@ -394,6 +409,7 @@ def fetch_ljspeech(conditioning_type="hybrid"):
     dataset_storage["vocabulary_size"] = len(ljspeech_hybridset)
     dataset_storage["vocabulary"] = translation
     return dataset_storage
+"""
 
 
 class IdxDecodeError(ValueError):

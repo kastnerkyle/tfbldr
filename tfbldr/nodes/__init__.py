@@ -18,6 +18,7 @@ from .nodes import VqEmbedding
 from .nodes import SimpleRNNCell
 from .nodes import LSTMCell
 from .nodes import GRUCell
+from .nodes import AdditiveGaussianNoise
 from .nodes import GaussianAttentionCell
 from .nodes import DiscreteMixtureOfLogistics
 from .nodes import DiscreteMixtureOfLogisticsCost
