@@ -1483,6 +1483,123 @@ def LSTMCell(list_of_inputs, list_of_input_dims,
     return final_out, (h, c)
 
 
+def BiLSTMLayer(list_of_inputs, list_of_input_dims,
+                num_units,
+                previous_forward_hidden=None, previous_forward_cell=None,
+                previous_reverse_hidden=None, previous_reverse_cell=None,
+                output_dim=None,
+                input_mask=None,
+                random_state=None,
+                name=None, init=None, scale="default",
+                forget_bias=1.,
+                cell_dropout=None,
+                strict=None):
+    if input_mask == None:
+        raise ValueError("No input mask currently unsupported")
+    if name is None:
+        name = _get_name()
+    name = name + "_bidirlstm_layer"
+    name_proj = name + "_proj"
+    hidden_dim = 4 * num_units
+    in_proj = Linear(list_of_inputs, list_of_input_dims,
+                     hidden_dim,
+                     random_state=random_state,
+                     name=name_proj,
+                     init=init, strict=strict)
+    if previous_forward_hidden == None:
+        h1_f_init = 0. * in_proj[0, :, :num_units]
+    else:
+        h1_f_init = previous_forward_hidden
+    if previous_reverse_hidden == None:
+        h1_b_init = 0. * in_proj[0, :, :num_units]
+    else:
+        h1_b_init = previous_reverse_hidden
+    if previous_forward_cell == None:
+        c1_f_init = 0. * in_proj[0, :, :num_units]
+    else:
+        c1_f_init = previous_forward_cell
+    if previous_reverse_cell == None:
+        c1_b_init = 0. * in_proj[0, :, :num_units]
+    else:
+        c1_b_init = previous_reverse_cell
+
+    def step(inp_t, inp_mask_t,
+             rev_inp_t, rev_inp_mask_t,
+             h1_f_tm1, c1_f_tm1, h1_b_tm1, c1_b_tm1):
+        output, s = LSTMCell([inp_t],
+                             [hidden_dim],
+                             h1_f_tm1, c1_f_tm1,
+                             num_units,
+                             input_mask=inp_mask_t,
+                             random_state=random_state,
+                             cell_dropout=cell_dropout,
+                             name=name + "forward_rnn",
+                             init=init)
+        h1_f_t = s[0]
+        c1_f_t = s[1]
+
+        output, s = LSTMCell([rev_inp_t],
+                             [hidden_dim],
+                             h1_b_tm1, c1_b_tm1,
+                             num_units,
+                             input_mask=rev_inp_mask_t,
+                             random_state=random_state,
+                             cell_dropout=cell_dropout,
+                             name=name + "reverse_rnn",
+                             init=init)
+        h1_b_t = s[0]
+        c1_b_t = s[1]
+        return h1_f_t, c1_f_t, h1_b_t, c1_b_t
+
+    r = scan(step,
+             [in_proj, input_mask, in_proj[::-1], input_mask[::-1]],
+             [h1_f_init, c1_f_init, h1_b_init, c1_b_init])
+    return tf.concat([r[0], r[2][::-1]], axis=-1)
+
+
+def SequenceConv1dStack(list_of_inputs, list_of_input_dims, num_feature_maps,
+                        batch_norm_flag,
+                        n_stacks=1,
+                        residual=True,
+                        activation="relu",
+                        kernel_sizes=[(1, 1), (3, 3), (5, 5)],
+                        border_mode="same",
+                        init=None, scale="default",
+                        biases=True, bias_offset=0.,
+                        name=None, random_state=None, strict=None):
+    if name is None:
+        name = _get_name()
+
+    # assuming they come in as length, batch, features
+    tlist = [tf.transpose(li[:, None], (2, 1, 0, 3)) for li in list_of_inputs]
+
+    c = Conv2d(tlist, list_of_input_dims, len(kernel_sizes) * num_feature_maps,
+               kernel_size=(1, 1),
+               name=name + "_convpre", random_state=random_state,
+               border_mode=border_mode, init=init, scale=scale, biases=biases,
+               bias_offset=bias_offset, strict=strict)
+    prev_layer = c
+    for ii in range(n_stacks):
+        cs = []
+        for jj, ks in enumerate(kernel_sizes):
+            c = Conv2d([prev_layer], [len(kernel_sizes) * num_feature_maps], num_feature_maps,
+                       kernel_size=ks,
+                       name=name + "_conv{}_ks{}".format(ii, jj), random_state=random_state,
+                       border_mode=border_mode, init=init, scale=scale, biases=biases,
+                       bias_offset=bias_offset, strict=strict)
+            cs.append(c)
+        layer = tf.concat(cs, axis=-1)
+        bn_l = BatchNorm2d(layer, batch_norm_flag, name="bn_conv{}".format(ii))
+        r_l = ReLU(bn_l)
+        prev_layer += r_l
+    post = Conv2d([prev_layer], [len(kernel_sizes) * num_feature_maps], num_feature_maps,
+                   kernel_size=(1, 1),
+                   name=name + "_convpost", random_state=random_state,
+                   border_mode=border_mode, init=init, scale=scale, biases=biases,
+                   bias_offset=bias_offset, strict=strict)
+    return tf.transpose(post[:, 0], (1, 0, 2))
+
+
 def AdditiveGaussianNoise(input_tensor, noise_std_mult, noise_mean=0.0, random_state=None):
     if random_state is None:
         raise ValueError("random_state argument is required")

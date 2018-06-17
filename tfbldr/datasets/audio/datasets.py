@@ -7,10 +7,76 @@ from ..text.cleaning import text_to_sequence
 from ..text.cleaning import sequence_to_text
 from ..text.cleaning import get_vocabulary_size
 
+from ...core import get_logger
+
 from scipy.io import wavfile
 import numpy as np
 import copy
 import os
+
+logger = get_logger()
+
+# As originally seen in sklearn.utils.extmath
+# Credit to the sklearn team
+def _incremental_mean_and_var(X, last_mean=.0, last_variance=None,
+                              last_sample_count=0):
+    """Calculate mean update and a Youngs and Cramer variance update.
+    last_mean and last_variance are statistics computed at the last step by the
+    function. Both must be initialized to 0.0. In case no scaling is required
+    last_variance can be None. The mean is always required and returned because
+    necessary for the calculation of the variance. last_n_samples_seen is the
+    number of samples encountered until now.
+    From the paper "Algorithms for computing the sample variance: analysis and
+    recommendations", by Chan, Golub, and LeVeque.
+    Parameters
+    ----------
+    X : array-like, shape (n_samples, n_features)
+        Data to use for variance update
+    last_mean : array-like, shape: (n_features,)
+    last_variance : array-like, shape: (n_features,)
+    last_sample_count : int
+    Returns
+    -------
+    updated_mean : array, shape (n_features,)
+    updated_variance : array, shape (n_features,)
+        If None, only mean is computed
+    updated_sample_count : int
+    References
+    ----------
+    T. Chan, G. Golub, R. LeVeque. Algorithms for computing the sample
+        variance: recommendations, The American Statistician, Vol. 37, No. 3,
+        pp. 242-247
+    Also, see the sparse implementation of this in
+    `utils.sparsefuncs.incr_mean_variance_axis` and
+    `utils.sparsefuncs_fast.incr_mean_variance_axis0`
+    """
+    # old = stats until now
+    # new = the current increment
+    # updated = the aggregated stats
+    last_sum = last_mean * last_sample_count
+    new_sum = X.sum(axis=0)
+
+    new_sample_count = X.shape[0]
+    updated_sample_count = last_sample_count + new_sample_count
+
+    updated_mean = (last_sum + new_sum) / updated_sample_count
+
+    if last_variance is None:
+        updated_variance = None
+    else:
+        new_unnormalized_variance = X.var(axis=0) * new_sample_count
+        if last_sample_count == 0:  # Avoid division by 0
+            updated_unnormalized_variance = new_unnormalized_variance
+        else:
+            last_over_new_count = last_sample_count / new_sample_count
+            last_unnormalized_variance = last_variance * last_sample_count
+            updated_unnormalized_variance = (
+                last_unnormalized_variance +
+                new_unnormalized_variance +
+                last_over_new_count / updated_sample_count *
+                (last_sum / last_over_new_count - new_sum) ** 2)
+        updated_variance = updated_unnormalized_variance / updated_sample_count
+    return updated_mean, updated_variance, updated_sample_count
 
 
 class wavfile_caching_mel_tbptt_iterator(object):
@@ -21,8 +87,6 @@ class wavfile_caching_mel_tbptt_iterator(object):
                  window_size=512,
                  window_step=128,
                  n_mel_filters=80,
-                 mel_min=0.01,
-                 mel_max=10000.,
                  return_normalized=True,
                  lower_edge_hertz=125.0,
                  upper_edge_hertz=7800.0,
@@ -39,10 +103,6 @@ class wavfile_caching_mel_tbptt_iterator(object):
          self.random_state = random_state
          self.shuffle = shuffle
          self.cache_dir_base = cache_dir_base
-         self.mel_min = mel_min
-         self.mel_max = mel_max
-         self.log_mel_min_ = 20. * np.log10(mel_min)
-         self.log_mel_max_ = 20. * np.log10(mel_max)
          self.return_normalized = return_normalized
          self.lower_edge_hertz = lower_edge_hertz
          self.upper_edge_hertz = upper_edge_hertz
@@ -54,7 +114,7 @@ class wavfile_caching_mel_tbptt_iterator(object):
          self.start_index = start_index
          self.stop_index = stop_index
 
-         if shuffle and random_state == None:
+         if shuffle and self.random_state == None:
              raise ValueError("Must pass random_state in")
          if txtfile_list is not None:
              # try to match every txt file and every wav file by name
@@ -111,6 +171,29 @@ class wavfile_caching_mel_tbptt_iterator(object):
          else:
              raise ValueError("Invalid value for stop_index : {}".format(self.stop_index))
 
+         if return_normalized:
+             self.return_normalized = False
+
+             # reset random seed here
+             cur_random = self.random_state.get_state()
+
+             # set up for train / test splits
+             self.all_indices_ = np.arange(len(self.wavfile_list))
+             self.random_state.shuffle(self.all_indices_)
+             self.all_indices_ = sorted(self.all_indices_[self.start_index:self.stop_index])
+
+             self.current_indices_ = [self.random_state.choice(self.all_indices_) for i in range(self.batch_size)]
+             self.current_offset_ = [0] * self.batch_size
+             self.current_read_ = [self.cache_read_wav_and_txt_features(self.wavfile_list[i], self.txtfile_list[i]) for i in self.current_indices_]
+
+             mean, std = self.cache_calculate_mean_and_std_normalization()
+             self._mean = mean
+             self._std = std
+
+             self.random_state = np.random.RandomState()
+             self.random_state.set_state(cur_random)
+             self.return_normalized = True
+
          # set up for train / test splits
          self.all_indices_ = np.arange(len(self.wavfile_list))
          self.random_state.shuffle(self.all_indices_)
@@ -120,17 +203,15 @@ class wavfile_caching_mel_tbptt_iterator(object):
          self.current_offset_ = [0] * self.batch_size
          self.current_read_ = [self.cache_read_wav_and_txt_features(self.wavfile_list[i], self.txtfile_list[i]) for i in self.current_indices_]
 
-
     def next_batch(self):
         mel_batch = np.zeros((self.truncation_length, self.batch_size, self.n_mel_filters))
-        resets = np.zeros((self.batch_size, 1))
+        resets = np.ones((self.batch_size, 1))
         texts = []
         for bi in range(self.batch_size):
             wf, txf = self.current_read_[bi]
             trunc = self.current_offset_[bi] + self.truncation_length
             if len(wf) < self.truncation_length or trunc >= len(wf):
-                if trunc >= len(wf):
-                    resets[bi] = 1
+                resets[bi] = 0.
                 # if it's too short, drop entirely
                 while True:
                     self.current_indices_[bi] = self.random_state.choice(self.all_indices_)
@@ -161,6 +242,38 @@ class wavfile_caching_mel_tbptt_iterator(object):
         t_mask[t[..., 0] > 0] = 1.
         return m, m_mask, t, t_mask, r
 
+    def cache_calculate_mean_and_std_normalization(self, n_estimate=1000):
+        normpath = self._fpathmaker("norm-mean-std")
+        if not os.path.exists(normpath):
+            logger.info("Calculating normalization per-dim mean and std")
+            for i in range(n_estimate):
+                if (i % 10) == 0:
+                    logger.info("Normalization batch {} of {}".format(i, n_estimate))
+                m, t, r = self.next_batch()
+                m = m.reshape(-1, m.shape[-1])
+                if i == 0:
+                    normalization_mean = np.mean(m, axis=0)
+                    normalization_std = np.std(m, axis=0)
+                    normalization_count = len(m)
+                else:
+                    nmean, nstd, ncount = _incremental_mean_and_var(
+                        m, normalization_mean, normalization_std,
+                        normalization_count)
+
+                    normalization_mean = nmean
+                    normalization_std = nstd
+                    normalization_count = ncount
+            d = {}
+            d["mean"] = normalization_mean
+            d["std"] = normalization_std
+            d["count"] = normalization_count
+            np.savez(normpath, **d)
+        norms = np.load(normpath)
+        mean = norms["mean"]
+        std = norms["std"]
+        norms.close()
+        return mean, std
+
     def calculate_log_mel_features(self, sample_rate, waveform, window_size, window_step, lower_edge_hertz, upper_edge_hertz, n_mel_filters):
         res = np.abs(stft(waveform, windowsize=window_size, step=window_step, real=False, compute_onesided=True))
         mels = linear_to_mel_weight_matrix(
@@ -170,19 +283,21 @@ class wavfile_caching_mel_tbptt_iterator(object):
             upper_edge_hertz=min(float(sample_rate) // 2, upper_edge_hertz),
             n_filts=n_mel_filters, dtype=np.float64)
         mel_res = np.dot(res, mels)
-        mel_res[mel_res < self.mel_min] = self.mel_min
-        mel_res[mel_res > self.mel_max] = self.mel_max
-        log_mel_res = 20. * np.log10(mel_res)
+        log_mel_res = np.log1p(mel_res)
         return log_mel_res
+
+    def _fpathmaker(self, fname):
+        melpart = "-logmel-wsz{}-wst{}-leh{}-ueh{}-nmel{}.npz".format(self.window_size, self.window_step, int(self.lower_edge_hertz), int(self.upper_edge_hertz), self.n_mel_filters)
+        if self.txtfile_list is not None:
+            txtpart = "-txt-clean{}".format(str("".join(self.clean_names)))
+            npzpath = self.cache + os.sep + fname + txtpart + melpart
+        else:
+            npzpath = self.cache + os.sep + fname + melpart
+        return npzpath
 
     def cache_read_wav_features(self, wavpath, return_npz=False):
         fname = ".".join(wavpath.split(os.sep)[-1].split(".")[:-1])
-        if self.txtfile_list is not None:
-            txtpart = "txt-clean{}".format(str("".join(self.clean_names)))
-            melpart = "logmel-wsz{}-wst{}-mn{}-mx{}-leh{}-ueh{}-nmel{}.npz".format(self.window_size, self.window_step, self.mel_min, self.mel_max, int(self.lower_edge_hertz), int(self.upper_edge_hertz), self.n_mel_filters)
-            npzpath = self.cache + os.sep + fname + txtpart + "-" + melpart
-        else:
-            npzpath = self.cache + os.sep + fname + "logmel-wsz{}-wst{}-leh{}-ueh{}-nmel{}.npz".format(self.window_size, self.window_step, int(self.lower_edge_hertz), int(self.upper_edge_hertz), self.n_mel_filters)
+        npzpath = self._fpathmaker(fname)
         if not os.path.exists(npzpath):
             sr, d = wavfile.read(wavpath)
             d = d.astype("float64")
@@ -192,9 +307,8 @@ class wavfile_caching_mel_tbptt_iterator(object):
             np.savez(npzpath, wavpath=wavpath, sample_rate=sr, log_mels=log_mels)
         npzfile = np.load(npzpath)
         log_mels = npzfile["log_mels"]
-        if self.return_normalized:
-            log_mels = (log_mels - self.log_mel_min_) / float(self.log_mel_max_ - self.log_mel_min_)
-            log_mels = 2. * log_mels - 1.
+        if self.return_normalized is True:
+            log_mels = (log_mels - self._mean) / self._std
         if return_npz:
             return log_mels, npzfile, npzpath
         else:

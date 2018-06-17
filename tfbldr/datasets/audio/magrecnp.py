@@ -49,12 +49,11 @@ def sonify(spectrogram, samples, transform_op_fn, logscaled=True):
 fs, d = fetch_sample_speech_tapestry()
 
 sample_rate = fs
-waveform = d
-
 window_size = 512
-fftsize = window_size
 step = 128
 n_mel = 80
+wav_scale = 2 ** 15
+waveform = d / float(wav_scale)
 
 def logmel(waveform):
     z = tf.contrib.signal.stft(waveform, window_size, step)
@@ -63,13 +62,10 @@ def logmel(waveform):
         num_mel_bins=n_mel,
         num_spectrogram_bins=magnitudes.shape[-1].value,
         sample_rate=sample_rate,
-        lower_edge_hertz=0.0,
-        upper_edge_hertz=fs // 2)
+        lower_edge_hertz=125.,
+        upper_edge_hertz=7800.)
     melspectrogram = tf.tensordot(magnitudes, filterbank, 1)
     return tf.log1p(melspectrogram)
-
-with tf.Session():
-    spectrogram = logmel(waveform).eval()
 
 
 def logmel2(waveform):
@@ -77,15 +73,16 @@ def logmel2(waveform):
     mels = linear_to_mel_weight_matrix(
         res.shape[1],
         sample_rate,
-        lower_edge_hertz=0.0,
-        upper_edge_hertz=fs // 2,
+        lower_edge_hertz=125.,
+        upper_edge_hertz=7800.,
         n_filts=n_mel, dtype=np.float64)
     mel_res = np.dot(res, mels)
-    log_mel_res = np.log1p(mel_res)
-    return log_mel_res
+    return np.log1p(mel_res)
+
+with tf.Session():
+    spectrogram = logmel(waveform).eval()
 
 spectrogram2 = logmel2(waveform)
-
 spectrogram = (spectrogram - spectrogram.min()) / float(spectrogram.max() - spectrogram.min())
 spectrogram2 = (spectrogram2 - spectrogram2.min()) / float(spectrogram2.max() - spectrogram2.min())
 
@@ -98,6 +95,7 @@ reconstructed_waveform = sonify(spectrogram, len(waveform), logmel)
 wavfile.write("tmp.wav", sample_rate, soundsc(reconstructed_waveform))
 reconstructed_waveform2 = sonify(spectrogram2, len(waveform), logmel)
 wavfile.write("tmp2.wav", sample_rate, soundsc(reconstructed_waveform2))
+
 
 fftsize = 512
 substep = 32
@@ -115,5 +113,3 @@ df = iterate_invert_spectrogram(d_s, fftsize, substep, n_iter=10, verbose=True)
 wavfile.write("tmpif.wav", sample_rate, soundsc(df))
 wavfile.write("tmpf.wav", sample_rate, soundsc(rw))
 wavfile.write("tmpf2.wav", sample_rate, soundsc(rw2))
-
-from IPython import embed; embed(); raise ValueError()

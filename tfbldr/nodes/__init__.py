@@ -16,6 +16,8 @@ from .nodes import MultiheadAttention
 from .nodes import Bilinear
 from .nodes import VqEmbedding
 from .nodes import SimpleRNNCell
+from .nodes import BiLSTMLayer
+from .nodes import SequenceConv1dStack
 from .nodes import LSTMCell
 from .nodes import GRUCell
 from .nodes import AdditiveGaussianNoise
