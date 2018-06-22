@@ -43,12 +43,13 @@ txtfiles = ljspeech["txtfiles"]
 batch_size = 64
 seq_len = 256
 window_mixtures = 10
-units = 1024
+enc_units = 128
+dec_units = 512
 emb_dim = 15
 
-train_random_state = np.random.RandomState(3122)
-train_itr = wavfile_caching_mel_tbptt_iterator(wavfiles, txtfiles, batch_size, seq_len, stop_index=.95, shuffle=True, random_state=train_random_state)
-mels, mel_mask, text, text_mask, reset = train_itr.next_masked_batch()
+itr_random_state = np.random.RandomState(3122)
+itr = wavfile_caching_mel_tbptt_iterator(wavfiles, txtfiles, batch_size, seq_len, start_index=.95, shuffle=True, random_state=itr_random_state)
+mels, mel_mask, text, text_mask, reset = itr.next_masked_batch()
 
 #with tf.Session(config=config) as sess:
 with tf.Session() as sess:
@@ -64,7 +65,9 @@ with tf.Session() as sess:
               "text_mask",
               "bias",
               "cell_dropout",
-              "noise",
+              #"prenet_dropout",
+              #"attskip_dropout",
+              "bn_flag",
               "pred",
               #"mix", "means", "lins",
               "att_w_init",
@@ -87,15 +90,14 @@ with tf.Session() as sess:
     vs = namedtuple('Params', fields)(
         *[tf.get_collection(name)[0] for name in fields]
     )
-
-    att_w_init = np.zeros((batch_size, emb_dim))
+    att_w_init = np.zeros((batch_size, 2 * enc_units))
     att_k_init = np.zeros((batch_size, window_mixtures))
-    att_h_init = np.zeros((batch_size, units))
-    att_c_init = np.zeros((batch_size, units))
-    h1_init = np.zeros((batch_size, units))
-    c1_init = np.zeros((batch_size, units))
-    h2_init = np.zeros((batch_size, units))
-    c2_init = np.zeros((batch_size, units))
+    att_h_init = np.zeros((batch_size, dec_units))
+    att_c_init = np.zeros((batch_size, dec_units))
+    h1_init = np.zeros((batch_size, dec_units))
+    c1_init = np.zeros((batch_size, dec_units))
+    h2_init = np.zeros((batch_size, dec_units))
+    c2_init = np.zeros((batch_size, dec_units))
 
     # only predict 1 thing
     endpoint = np.where(text_mask[:, 0] == 1)[0][-1]
@@ -114,19 +116,21 @@ with tf.Session() as sess:
     att_ws = []
     att_phis = []
     random_state = np.random.RandomState(11)
-    noise_scale = 4.
-    for ii in range(2048):
+    #noise_scale = .5
+    for ii in range(1024):
         print("pred step {}".format(ii))
-        noise_block = np.clip(random_state.randn(*in_mels.shape), -6, 6)
-        in_mels = in_mels + noise_scale * noise_block
+        #noise_block = np.clip(random_state.randn(*in_mels.shape), -6, 6)
+        #in_mels = in_mels + noise_scale * noise_block
         #if ii > 0:
         #    in_mels[0] = mels[ii - 1]
         feed = {
                 vs.in_mels: in_mels,
                 vs.in_mel_mask: in_mel_mask,
+                vs.bn_flag: 1.,
                 vs.text: text,
                 vs.text_mask: text_mask,
                 vs.cell_dropout: 1.,
+                #vs.attskip_dropout: 1.,
                 vs.att_w_init: att_w_init,
                 vs.att_k_init: att_k_init,
                 vs.att_h_init: att_h_init,
@@ -170,9 +174,16 @@ preds = np.array(preds)
 n_plot = 4
 f, axarr = plt.subplots(1, n_plot)
 for jj in range(n_plot):
-    spectrogram = preds[:, jj] * train_itr._std + train_itr._mean
+    spectrogram = preds[:, jj] * itr._std + itr._mean
     axarr[jj].imshow(spectrogram)
 plt.savefig("sample_spec.png")
+
+att_phis = np.array(att_phis)
+f, axarr = plt.subplots(1, n_plot)
+for jj in range(n_plot):
+    phi_i = att_phis[:, jj]
+    axarr[jj].imshow(phi_i)
+plt.savefig("sample_att.png")
 
 sample_rate = 22050
 window_size = 512
@@ -225,7 +236,7 @@ def sonify(spectrogram, samples, transform_op_fn, logscaled=True):
     return waveform
 
 for jj in range(n_plot):
-    spectrogram = preds[:, jj] * train_itr._std + train_itr._mean
+    spectrogram = preds[:, jj] * itr._std + itr._mean
     reconstructed_waveform = sonify(spectrogram, len(spectrogram) * step, logmel)
     wavfile.write("sample_{}_pre.wav".format(jj), sample_rate, soundsc(reconstructed_waveform))
 

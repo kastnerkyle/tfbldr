@@ -15,6 +15,7 @@ from .nodes import TransformerBlock
 from .nodes import MultiheadAttention
 from .nodes import Bilinear
 from .nodes import VqEmbedding
+from .nodes import VqSeqEmbedding
 from .nodes import SimpleRNNCell
 from .nodes import BiLSTMLayer
 from .nodes import SequenceConv1dStack

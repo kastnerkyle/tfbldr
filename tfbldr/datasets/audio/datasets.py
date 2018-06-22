@@ -171,6 +171,9 @@ class wavfile_caching_mel_tbptt_iterator(object):
          else:
              raise ValueError("Invalid value for stop_index : {}".format(self.stop_index))
 
+         # could match sizes here...
+         self.wavfile_sizes_mbytes = [os.stat(wf).st_size // 1024 for wf in self.wavfile_list]
+
          if return_normalized:
              self.return_normalized = False
 
@@ -185,6 +188,7 @@ class wavfile_caching_mel_tbptt_iterator(object):
              self.current_indices_ = [self.random_state.choice(self.all_indices_) for i in range(self.batch_size)]
              self.current_offset_ = [0] * self.batch_size
              self.current_read_ = [self.cache_read_wav_and_txt_features(self.wavfile_list[i], self.txtfile_list[i]) for i in self.current_indices_]
+             self.to_reset_ = [0] * self.batch_size
 
              mean, std = self.cache_calculate_mean_and_std_normalization()
              self._mean = mean
@@ -202,6 +206,7 @@ class wavfile_caching_mel_tbptt_iterator(object):
          self.current_indices_ = [self.random_state.choice(self.all_indices_) for i in range(self.batch_size)]
          self.current_offset_ = [0] * self.batch_size
          self.current_read_ = [self.cache_read_wav_and_txt_features(self.wavfile_list[i], self.txtfile_list[i]) for i in self.current_indices_]
+         self.to_reset_ = [0] * self.batch_size
 
     def next_batch(self):
         mel_batch = np.zeros((self.truncation_length, self.batch_size, self.n_mel_filters))
@@ -209,10 +214,10 @@ class wavfile_caching_mel_tbptt_iterator(object):
         texts = []
         for bi in range(self.batch_size):
             wf, txf = self.current_read_[bi]
-            trunc = self.current_offset_[bi] + self.truncation_length
-            if len(wf) < self.truncation_length or trunc >= len(wf):
+            if self.to_reset_[bi] == 1:
+                self.to_reset_[bi] = 0
                 resets[bi] = 0.
-                # if it's too short, drop entirely
+                # get a new sample
                 while True:
                     self.current_indices_[bi] = self.random_state.choice(self.all_indices_)
                     self.current_offset_[bi] = 0
@@ -224,11 +229,15 @@ class wavfile_caching_mel_tbptt_iterator(object):
                     wf, txf = self.current_read_[bi]
                     if len(wf) > self.truncation_length:
                         break
+
             trunc = self.current_offset_[bi] + self.truncation_length
+            if trunc >= len(wf):
+                self.to_reset_[bi] = 1
             wf_sub = wf[self.current_offset_[bi]:trunc]
             self.current_offset_[bi] = trunc
-            mel_batch[:, bi] = wf_sub
+            mel_batch[:len(wf_sub), bi] = wf_sub
             texts.append(txf)
+
         mlen = max([len(t) for t in texts])
         text_batch = np.zeros((mlen, self.batch_size, 1))
         for bi, txt in enumerate(texts):
@@ -238,6 +247,9 @@ class wavfile_caching_mel_tbptt_iterator(object):
     def next_masked_batch(self):
         m, t, r = self.next_batch()
         m_mask = np.ones_like(m[..., 0])
+        # not ideal, in theory could also hit on 0 mels but we aren't using this for now
+        # should find contiguous chunk starting from the end
+        m_mask[np.sum(m, axis=-1) == 0] = 0.
         t_mask = np.zeros_like(t[..., 0])
         t_mask[t[..., 0] > 0] = 1.
         return m, m_mask, t, t_mask, r
@@ -249,7 +261,8 @@ class wavfile_caching_mel_tbptt_iterator(object):
             for i in range(n_estimate):
                 if (i % 10) == 0:
                     logger.info("Normalization batch {} of {}".format(i, n_estimate))
-                m, t, r = self.next_batch()
+                m, m_mask, t, t_mask, r = self.next_masked_batch()
+                m = m[m_mask > 0]
                 m = m.reshape(-1, m.shape[-1])
                 if i == 0:
                     normalization_mean = np.mean(m, axis=0)

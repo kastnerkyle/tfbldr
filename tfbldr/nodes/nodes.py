@@ -346,6 +346,91 @@ def make_numpy_weights(in_dim, out_dims, random_state, init=None,
     return ws
 
 
+def VqSeqEmbedding(input_tensor, input_dim, count_index, modulo_len,
+                   embedding_dim,
+                   random_state=None,
+                   init="embedding_normal",
+                   scale="default",
+                   strict=None, name=None):
+    """
+    Will use stop_grad_trick to give a straighthrough estimator for gradient
+    """
+    if random_state is None:
+        raise ValueError("Must pass instance of np.random.RandomState!")
+    if init != "embedding_normal":
+        raise ValueError("Other init values besides 'embedding_normal' not yet supported, got {}".format(init))
+    if scale != "default":
+        raise ValueError("Scale values besides 'default' not yet supported, got {}".format(scale))
+
+    if name is None:
+        name = _get_name()
+
+    name_w = name + "_vqembedding_w"
+    name_out = name + "_vqembedding_out"
+
+    if strict is None:
+        strict = get_strict_mode_default()
+
+    if strict:
+        cur_defs = get_params_dict()
+        if name_w in cur_defs:
+            raise ValueError("Name {} already created in params dict!".format(name_w))
+
+    expanded_dim = int(embedding_dim * modulo_len)
+    try:
+        emb = _get_shared(name_w)
+    except NameError:
+        #logger.info("VqEmbedding layer {} initialized using init {}".format(name, init))
+        embedding_weight, = make_numpy_weights(input_dim, [expanded_dim],
+                                               random_state, init=init,
+                                               scale=scale, name=name_w)
+        embedding_weight = embedding_weight.transpose(1, 0)
+        emb = tf.Variable(embedding_weight, trainable=True)
+        _set_shared(name_w, emb)
+    np_subsets = np.array([i * embedding_dim + np.arange(embedding_dim) for i in range(modulo_len)])
+    subsets = tf.Variable(np_subsets, trainable=False)
+
+    def _vqcore(input_tensor, emb):
+        emb_r = tf.transpose(emb, (1, 0))
+        ishp = _shape(input_tensor)
+        extender = [None] * (len(ishp) - 1)
+        sq_diff = tf.square(input_tensor[..., None] - emb_r.__getitem__(extender))
+        sum_sq_diff = tf.reduce_sum(sq_diff, axis=-2)
+        discrete_latent_idx = tf.argmin(sum_sq_diff, axis=-1)
+        shp = _shape(discrete_latent_idx)
+        flat_idx = tf.cast(tf.reshape(discrete_latent_idx, (-1,)), tf.int32)
+        lu_vectors = tf.nn.embedding_lookup(emb, flat_idx)
+        shp2 = _shape(lu_vectors)
+        if len(ishp) == 4:
+            z_q_x = tf.reshape(lu_vectors, (-1, shp[1], shp[2], shp2[-1]))
+        elif len(ishp) == 3:
+            z_q_x = tf.reshape(lu_vectors, (-1, shp[1], shp2[-1]))
+        elif len(ishp) == 2:
+            z_q_x = tf.reshape(lu_vectors, (-1, shp2[-1]))
+        else:
+            raise ValueError("Unknown input tensor dim {}, only 2, 3, 4 currently supported".format(len(ishp)))
+        return z_q_x, discrete_latent_idx
+
+    # More proper ways here
+    # https://uoguelph-mlrg.github.io/tensorflow_gradients/
+    # but stop grad trick works fine for this
+    #https://stackoverflow.com/questions/36456436/how-can-i-define-only-the-gradient-for-a-tensorflow-subgraph/36480182#36480182
+    mod_t = tf.mod(count_index, modulo_len)
+    sub_emb = tf.nn.embedding_lookup(emb, subsets[mod_t])
+    z_q_x, discrete_latent_idx = _vqcore(input_tensor, sub_emb)
+    non_st_z_q_x = tf.identity(z_q_x)
+    # straight through trick
+    # in general for g(x) desired gradient, y = f(x) desired forward
+    # t = g(x)
+    # y = t + tf.stop_gradient(f(x) - t)
+    # Here, use identity since we want g(x) to be straight-through
+    t = tf.identity(input_tensor)
+    z_q_x = t + tf.stop_gradient(z_q_x - t)
+    z_q_x = tf.identity(z_q_x, name=name_out)
+    # Need *both* straight through quantized and non-st for embedding loss
+    return z_q_x, discrete_latent_idx, non_st_z_q_x, emb
+
+
 def VqEmbedding(input_tensor, input_dim, embedding_dim,
                 random_state=None,
                 init="embedding_normal",
@@ -627,7 +712,7 @@ def TransformerBlock(value, key, query_and_passthrough, output_dim, n_heads=8, m
 
 def Linear(list_of_inputs, list_of_input_dims, output_dim, random_state=None,
            name=None, init=None, scale="default", biases=True, bias_offset=0.,
-           strict=None):
+           dropout_flag_prob_keep=None, strict=None):
     if random_state is None:
         raise ValueError("Must pass instance of np.random.RandomState!")
     nd = _ndim(list_of_inputs[0])
@@ -667,6 +752,9 @@ def Linear(list_of_inputs, list_of_input_dims, output_dim, random_state=None,
     except NameError:
         weight = tf.Variable(weight_values, trainable=True, name=name_w)
         _set_shared(name_w, weight)
+
+    if dropout_flag_prob_keep is not None:
+        input_var = tf.nn.dropout(input_var, dropout_flag_prob_keep, seed=random_state.randint(10000))
 
     out = dot(input_var, weight)
 
@@ -1616,6 +1704,7 @@ def GaussianAttentionCell(list_of_step_inputs, list_of_step_input_dims,
                           previous_attention_weight,
                           att_dim=10,
                           attention_scale=1.,
+                          step_op="exp",
                           cell_type="lstm",
                           name=None,
                           input_mask=None,
@@ -1678,14 +1767,24 @@ def GaussianAttentionCell(list_of_step_inputs, list_of_step_input_dims,
         random_state=random_state,
         strict=strict, init=ctx_forward_init)
     """
-
-    a_t = tf.exp(a_t)
-    b_t = tf.exp(b_t)
-    a_t = tf.identity(a_t, name=name + "_a_scale")
-    b_t = tf.identity(b_t, name=name + "_b_scale")
-    step_size = attention_scale * tf.exp(k_t)
-    k_t = k_tm1 + step_size
-    k_t = tf.identity(k_t, name=name + "_position")
+    if step_op == "exp":
+        a_t = tf.exp(a_t)
+        b_t = tf.exp(b_t)
+        a_t = tf.identity(a_t, name=name + "_a_scale")
+        b_t = tf.identity(b_t, name=name + "_b_scale")
+        step_size = attention_scale * tf.exp(k_t)
+        k_t = k_tm1 + step_size
+        k_t = tf.identity(k_t, name=name + "_position")
+    elif step_op == "softplus":
+        a_t = tf.exp(a_t)
+        b_t = tf.exp(b_t)
+        a_t = tf.identity(a_t, name=name + "_a_scale")
+        b_t = tf.identity(b_t, name=name + "_b_scale")
+        step_size = attention_scale * tf.nn.softplus(k_t)
+        k_t = k_tm1 + step_size
+        k_t = tf.identity(k_t, name=name + "_position")
+    else:
+        raise ValueError("{} not a known step_op".format(step_op))
 
     # tf.shape and tensor.shape are not the same...
     u = tf.cast(tf.range(0., limit=tf.shape(full_conditioning_tensor)[0], delta=1.), dtype=tf.float32)

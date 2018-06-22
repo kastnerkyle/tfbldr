@@ -25,13 +25,14 @@ from tfbldr.nodes import AdditiveGaussianNoise
 from tfbldr import scan
 
 seq_len = 256
-batch_size = 32
+batch_size = 64
 window_mixtures = 10
 output_mixtures = 20
-cell_dropout = 1.
-noise_scale = 8.
+cell_dropout = .9
+#noise_scale = 8.
+prenet_units = 128
 n_filts = 128
-n_stacks = 2
+n_stacks = 3
 enc_units = 128
 dec_units = 512
 emb_dim = 15
@@ -77,6 +78,7 @@ def create_graph():
 
         bias = tf.placeholder_with_default(tf.zeros(shape=[]), shape=[])
         cell_dropout = tf.placeholder_with_default(cell_dropout_scale * tf.ones(shape=[]), shape=[])
+        prenet_dropout = tf.placeholder_with_default(0.5 * tf.ones(shape=[]), shape=[])
         bn_flag = tf.placeholder_with_default(tf.zeros(shape=[]), shape=[])
 
         att_w_init = tf.placeholder(tf.float32, shape=[batch_size, 2 * enc_units])
@@ -93,6 +95,13 @@ def create_graph():
         out_mels = mels[1:, :, :]
         out_mel_mask = mel_mask[1:]
 
+        projmel1 = Linear([in_mels], [output_size], prenet_units,
+                          dropout_flag_prob_keep=prenet_dropout, name="prenet1",
+                          random_state=random_state)
+        projmel2 = Linear([projmel1], [prenet_units], prenet_units,
+                          dropout_flag_prob_keep=prenet_dropout, name="prenet2",
+                          random_state=random_state)
+
         text_e, emb = Embedding(text, vocabulary_size, emb_dim, random_state=random_state,
                                 name="text_emb")
         conv_text = SequenceConv1dStack([text_e], [emb_dim], n_filts, bn_flag,
@@ -107,11 +116,13 @@ def create_graph():
                              init=rnn_init,
                              random_state=random_state)
 
+
         def step(inp_t, inp_mask_t,
+                 corr_inp_t,
                  att_w_tm1, att_k_tm1, att_h_tm1, att_c_tm1,
                  h1_tm1, c1_tm1, h2_tm1, c2_tm1):
 
-            o = GaussianAttentionCell([inp_t], [output_size],
+            o = GaussianAttentionCell([corr_inp_t], [prenet_units],
                                       (att_h_tm1, att_c_tm1),
                                       att_k_tm1,
                                       bitext,
@@ -120,17 +131,19 @@ def create_graph():
                                       att_w_tm1,
                                       input_mask=inp_mask_t,
                                       conditioning_mask=text_mask,
-                                      attention_scale = 1. / 10.,
+                                      #attention_scale=1. / 10.,
+                                      attention_scale=1.,
+                                      step_op="softplus",
                                       name="att",
                                       random_state=random_state,
-                                      cell_dropout=1., #cell_dropout,
+                                      cell_dropout=1.,#cell_dropout,
                                       init=rnn_init)
             att_w_t, att_k_t, att_phi_t, s = o
             att_h_t = s[0]
             att_c_t = s[1]
 
-            output, s = LSTMCell([inp_t, att_w_t, att_h_t],
-                                 [output_size, 2 * enc_units, dec_units],
+            output, s = LSTMCell([corr_inp_t, att_w_t, att_h_t],
+                                 [prenet_units, 2 * enc_units, dec_units],
                                  h1_tm1, c1_tm1, dec_units,
                                  input_mask=inp_mask_t,
                                  random_state=random_state,
@@ -139,8 +152,8 @@ def create_graph():
             h1_t = s[0]
             c1_t = s[1]
 
-            output, s = LSTMCell([inp_t, att_w_t, h1_t],
-                                 [output_size, 2 * enc_units, dec_units],
+            output, s = LSTMCell([corr_inp_t, att_w_t, h1_t],
+                                 [prenet_units, 2 * enc_units, dec_units],
                                  h2_tm1, c2_tm1, dec_units,
                                  input_mask=inp_mask_t,
                                  random_state=random_state,
@@ -151,7 +164,7 @@ def create_graph():
             return output, att_w_t, att_k_t, att_phi_t, att_h_t, att_c_t, h1_t, c1_t, h2_t, c2_t
 
         r = scan(step,
-                 [in_mels, in_mel_mask],
+                 [in_mels, in_mel_mask, projmel2],
                  [None, att_w_init, att_k_init, None, att_h_init, att_c_init,
                   h1_init, c1_init, h2_init, c2_init])
         output = r[0]
@@ -173,6 +186,7 @@ def create_graph():
         loss = tf.reduce_mean(tf.reduce_sum(cc, axis=-1))# / tf.reduce_sum(out_mel_mask)
 
         learning_rate = 0.0001
+        #steps = tf.Variable(0.)
         #learning_rate = tf.train.exponential_decay(0.001, steps, staircase=True,
         #                                           decay_steps=50000, decay_rate=0.5)
 
@@ -192,6 +206,7 @@ def create_graph():
                     "text_mask",
                     "bias",
                     "cell_dropout",
+                    "prenet_dropout",
                     "bn_flag",
                     "pred",
                     #"mix", "means", "lins",
@@ -242,6 +257,7 @@ stateful_args = [att_w_init,
                  c2_init]
 step_count = 0
 def loop(sess, itr, extras, stateful_args):
+    """
     global step_count
     global noise_scale
     step_count += 1
@@ -253,11 +269,14 @@ def loop(sess, itr, extras, stateful_args):
             noise_scale = noise_scale - 2.
         if noise_scale < .5:
             noise_scale = .5
+    """
     mels, mel_mask, text, text_mask, reset = itr.next_masked_batch()
     in_m = mels[:-1]
     in_mel_mask = mel_mask[:-1]
-    noise_block = np.clip(random_state.randn(*in_m.shape), -6, 6)
-    in_m = in_m + noise_scale * noise_block
+
+    #noise_block = np.clip(random_state.randn(*in_m.shape), -6, 6)
+    #in_m = in_m + noise_scale * noise_block
+
     out_m = mels[1:]
     out_mel_mask = mel_mask[1:]
 
@@ -339,7 +358,7 @@ with tf.Session(graph=g) as sess:
     run_loop(sess,
              loop, train_itr,
              loop, train_itr,
-             n_steps=50000,
+             n_steps=500000,
              n_train_steps_per=1000,
              train_stateful_args=stateful_args,
              n_valid_steps_per=0,
