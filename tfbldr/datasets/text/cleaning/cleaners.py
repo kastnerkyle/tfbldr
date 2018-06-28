@@ -15,6 +15,7 @@ hyperparameter. Some cleaners are English-specific. You'll typically want to use
 import re
 from unidecode import unidecode
 from .numbers import normalize_numbers
+from .eng_rules import rulebased_g2p
 
 
 _whitespace_re = re.compile(r'\s+')
@@ -119,6 +120,14 @@ def transliteration_cleaners(text):
   text = convert_to_ascii(text)
   text = lowercase(text)
   text = collapse_whitespace(text)
+  return text
+
+
+def rulebased_g2p_cleaners(text):
+  text = convert_to_ascii(text)
+  r = rulebased_g2p(text)
+  text = "^".join(["&".join(ri[1]).lower() for ri in r])
+  text = lowercase(text)
   return text
 
 

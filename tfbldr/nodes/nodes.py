@@ -1783,6 +1783,14 @@ def GaussianAttentionCell(list_of_step_inputs, list_of_step_input_dims,
         step_size = attention_scale * tf.nn.softplus(k_t)
         k_t = k_tm1 + step_size
         k_t = tf.identity(k_t, name=name + "_position")
+    elif step_op == "relu":
+        a_t = tf.exp(a_t)
+        b_t = tf.exp(b_t)
+        a_t = tf.identity(a_t, name=name + "_a_scale")
+        b_t = tf.identity(b_t, name=name + "_b_scale")
+        step_size = attention_scale * tf.nn.relu(k_t)
+        k_t = k_tm1 + step_size
+        k_t = tf.identity(k_t, name=name + "_position")
     else:
         raise ValueError("{} not a known step_op".format(step_op))
 

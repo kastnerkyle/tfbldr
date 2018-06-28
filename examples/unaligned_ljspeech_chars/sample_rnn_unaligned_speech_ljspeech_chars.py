@@ -20,6 +20,9 @@ parser = argparse.ArgumentParser()
 parser.add_argument('direct_model', nargs=1, default=None)
 parser.add_argument('--model', dest='model_path', type=str, default=None)
 parser.add_argument('--seed', dest='seed', type=int, default=1999)
+parser.add_argument('--test', dest='test', type=str, default="quote")
+parser.add_argument('--inp', dest='input_type', type=str, default="rule")
+parser.add_argument('--bs', dest='batch_size', type=int, default=48)
 args = parser.parse_args()
 if args.model_path == None:
     if args.direct_model == None:
@@ -40,16 +43,46 @@ ljspeech = fetch_ljspeech()
 wavfiles = ljspeech["wavfiles"]
 txtfiles = ljspeech["txtfiles"]
 
-batch_size = 64
+batch_size = args.batch_size
 seq_len = 256
 window_mixtures = 10
 enc_units = 128
 dec_units = 512
 emb_dim = 15
+sonify_steps = 100
+gl_steps = 100
 
 itr_random_state = np.random.RandomState(3122)
-itr = wavfile_caching_mel_tbptt_iterator(wavfiles, txtfiles, batch_size, seq_len, start_index=.95, shuffle=True, random_state=itr_random_state)
+if args.input_type == "rule":
+    itr = wavfile_caching_mel_tbptt_iterator(wavfiles, txtfiles, batch_size, seq_len, start_index=.95, shuffle=True, random_state=itr_random_state)
+elif args.input_type == "text":
+    itr = wavfile_caching_mel_tbptt_iterator(wavfiles, txtfiles, batch_size, seq_len, clean_names=["english_cleaners",], start_index=.95, shuffle=True, random_state=itr_random_state)
+else:
+    raise ValueError("Unknown argument to --inp {}".format(args.input_type))
+
 mels, mel_mask, text, text_mask, reset = itr.next_masked_batch()
+if args.test == "valid":
+    n_to_sample = 4
+    sonify_steps = 1000
+    gl_steps = 100
+elif args.test in ["basic", "quote", "full", "taco_prosody", "taco_small", "custom"]:
+    with open("{}_test.txt".format(args.test)) as f:
+        lines = f.readlines()
+    lines = [l.strip() for l in lines]
+    n_to_sample = len(lines)
+    print("lines to sample:")
+    int_lines = []
+    for l in lines:
+        int_lines.append(itr.transform_txt(l))
+        print(itr.inverse_transform_txt(itr.transform_txt(l)))
+    longest = max([len(il) for il in int_lines])
+    text = np.zeros((longest, batch_size, 1))
+    text_mask = np.zeros((longest, batch_size))
+    for n, il in enumerate(int_lines):
+        text[:len(il), n, 0] = il
+        text_mask[:len(il), n] = 1.
+else:
+    raise ValueError("Invalid argument for args.test")
 
 #with tf.Session(config=config) as sess:
 with tf.Session() as sess:
@@ -99,10 +132,9 @@ with tf.Session() as sess:
     h2_init = np.zeros((batch_size, dec_units))
     c2_init = np.zeros((batch_size, dec_units))
 
+    """
     # only predict 1 thing
     endpoint = np.where(text_mask[:, 0] == 1)[0][-1]
-
-    """
     text = text[:endpoint]
     for jj in range(text.shape[1]):
         text[:, jj] = text[:, 0]
@@ -117,7 +149,10 @@ with tf.Session() as sess:
     att_phis = []
     random_state = np.random.RandomState(11)
     #noise_scale = .5
-    for ii in range(1024):
+    is_finished_sampling = [False] * n_to_sample
+    finished_step = [-1] * n_to_sample
+    ii = 0
+    while True:
         print("pred step {}".format(ii))
         #noise_block = np.clip(random_state.randn(*in_mels.shape), -6, 6)
         #in_mels = in_mels + noise_scale * noise_block
@@ -130,7 +165,6 @@ with tf.Session() as sess:
                 vs.text: text,
                 vs.text_mask: text_mask,
                 vs.cell_dropout: 1.,
-                #vs.attskip_dropout: 1.,
                 vs.att_w_init: att_w_init,
                 vs.att_k_init: att_k_init,
                 vs.att_h_init: att_h_init,
@@ -155,6 +189,25 @@ with tf.Session() as sess:
         att_phi_np = r[8]
         pred_np = r[9]
 
+        ii += 1
+        max_text = max([text_mask[:, mbi].sum() for mbi in range(n_to_sample)])
+        if ii > 30 * max_text:
+            # it's gone too far, kill
+            finished_step = [30 * max_text] * n_to_sample
+            print("Exceeded 30 * max text length of {},  terminating...".format(max_text))
+            break
+
+        for mbi in range(n_to_sample):
+            last_sym = int(text_mask[:, mbi].sum()) - 1
+            if np.argmax(att_phi_np[0, mbi]) >= last_sym:
+                if is_finished_sampling[mbi] == False:
+                    is_finished_sampling[mbi] = True
+                    finished_step[mbi] = ii
+
+        if all(is_finished_sampling):
+            print("All samples finished at step {}".format(ii))
+            break
+
         att_ws.append(att_w_np[0])
         att_phis.append(att_phi_np[0])
         preds.append(pred_np[0])
@@ -171,19 +224,19 @@ with tf.Session() as sess:
         c2_init = c2_np[-1]
 
 preds = np.array(preds)
-n_plot = 4
+n_plot = n_to_sample
 f, axarr = plt.subplots(1, n_plot)
 for jj in range(n_plot):
     spectrogram = preds[:, jj] * itr._std + itr._mean
     axarr[jj].imshow(spectrogram)
-plt.savefig("sample_spec.png")
+plt.savefig("{}_sample_spec.png".format(args.test))
 
 att_phis = np.array(att_phis)
 f, axarr = plt.subplots(1, n_plot)
 for jj in range(n_plot):
     phi_i = att_phis[:, jj]
     axarr[jj].imshow(phi_i)
-plt.savefig("sample_att.png")
+plt.savefig("{}_sample_att.png".format(args.test))
 
 sample_rate = 22050
 window_size = 512
@@ -225,7 +278,7 @@ def sonify(spectrogram, samples, transform_op_fn, logscaled=True):
             tol=1e-16,
             method='L-BFGS-B',
             options={
-                'maxiter': 1000,
+                'maxiter': sonify_steps,
                 'disp': True
             })
 
@@ -236,13 +289,14 @@ def sonify(spectrogram, samples, transform_op_fn, logscaled=True):
     return waveform
 
 for jj in range(n_plot):
-    spectrogram = preds[:, jj] * itr._std + itr._mean
+    pjj = preds[:finished_step[jj], jj]
+    spectrogram = pjj * itr._std + itr._mean
     reconstructed_waveform = sonify(spectrogram, len(spectrogram) * step, logmel)
-    wavfile.write("sample_{}_pre.wav".format(jj), sample_rate, soundsc(reconstructed_waveform))
+    wavfile.write("{}_sample_{}_pre.wav".format(args.test, jj), sample_rate, soundsc(reconstructed_waveform))
 
     fftsize = 512
     substep = 32
     rw_s = np.abs(stft(reconstructed_waveform, fftsize=fftsize, step=substep, real=False,
                        compute_onesided=False))
-    rw = iterate_invert_spectrogram(rw_s, fftsize, substep, n_iter=100, verbose=True)
-    wavfile.write("sample_{}_post.wav".format(jj), sample_rate, soundsc(rw))
+    rw = iterate_invert_spectrogram(rw_s, fftsize, substep, n_iter=gl_steps, verbose=True)
+    wavfile.write("{}_sample_{}_post.wav".format(args.test, jj), sample_rate, soundsc(rw))

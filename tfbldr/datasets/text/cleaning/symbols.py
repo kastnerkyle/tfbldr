@@ -9,7 +9,11 @@ import cmudict
 
 _pad        = '_'
 _eos        = '~'
-_characters = 'abcdefghijklmnopqrstuvwxyz!\',-.:? '
+# PUT IT BACK!!!
+_characters = 'abcdefghijklmnopqrstuvwxyz&^!\',-.:? '
+
+#_characters = 'abcdefghijklmnopqrstuvwxyz!\',-.:? '
+
 #_characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!\',-.:? '
 
 # Prepend "@" to ARPAbet symbols to ensure uniqueness (some are the same as uppercase letters):

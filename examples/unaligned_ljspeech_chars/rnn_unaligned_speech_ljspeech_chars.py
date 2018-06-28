@@ -25,10 +25,10 @@ from tfbldr.nodes import AdditiveGaussianNoise
 from tfbldr import scan
 
 seq_len = 256
-batch_size = 64
+batch_size = 48
 window_mixtures = 10
 output_mixtures = 20
-cell_dropout = .9
+cell_dropout = 1.
 #noise_scale = 8.
 prenet_units = 128
 n_filts = 128
@@ -107,6 +107,7 @@ def create_graph():
         conv_text = SequenceConv1dStack([text_e], [emb_dim], n_filts, bn_flag,
                                         n_stacks=n_stacks,
                                         kernel_sizes=[(1, 1), (3, 3), (5, 5)],
+                                        #kernel_sizes=[(5, 5)],
                                         name="enc_conv1", random_state=random_state)
 
         bitext = BiLSTMLayer([conv_text], [n_filts],
@@ -179,11 +180,18 @@ def create_graph():
         c2 = r[9]
 
         pred = Linear([output], [dec_units], output_size, name="out_proj", random_state=random_state)
-        #mix, means, lins = DiscreteMixtureOfLogistics([proj], [output_size], n_output_channels=1,
-        #                                              name="dml", random_state=random_state)
-        #cc = DiscreteMixtureOfLogisticsCost(mix, means, lins, out_mels, 256)
+        """
+        mix, means, lins = DiscreteMixtureOfLogistics([proj], [output_size], n_output_channels=1,
+                                                      name="dml", random_state=random_state)
+        cc = DiscreteMixtureOfLogisticsCost(mix, means, lins, out_mels, 256)
+        """
+
+        # correct masking
         cc = (pred - out_mels) ** 2
-        loss = tf.reduce_mean(tf.reduce_sum(cc, axis=-1))# / tf.reduce_sum(out_mel_mask)
+        cc = out_mel_mask[..., None] * cc
+        loss = tf.reduce_sum(tf.reduce_sum(cc, axis=-1)) / tf.reduce_sum(out_mel_mask)
+
+        #loss = tf.reduce_mean(tf.reduce_sum(cc, axis=-1))# / tf.reduce_sum(out_mel_mask)
 
         learning_rate = 0.0001
         #steps = tf.Variable(0.)
@@ -358,7 +366,7 @@ with tf.Session(graph=g) as sess:
     run_loop(sess,
              loop, train_itr,
              loop, train_itr,
-             n_steps=500000,
+             n_steps=1000000,
              n_train_steps_per=1000,
              train_stateful_args=stateful_args,
              n_valid_steps_per=0,

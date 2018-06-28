@@ -92,7 +92,7 @@ class wavfile_caching_mel_tbptt_iterator(object):
                  upper_edge_hertz=7800.0,
                  start_index=0,
                  stop_index=None,
-                 clean_names=["english_cleaners",],
+                 clean_names=["english_cleaners", "rulebased_g2p_cleaners"],
                  cache_dir_base="/Tmp/kastner/tfbldr_cache",
                  shuffle=False, random_state=None):
          self.wavfile_list = wavfile_list
@@ -326,6 +326,14 @@ class wavfile_caching_mel_tbptt_iterator(object):
             return log_mels, npzfile, npzpath
         else:
             return log_mels
+
+    def transform_txt(self, line):
+        int_txt = text_to_sequence(line, self.clean_names)
+        return int_txt
+
+    def inverse_transform_txt(self, int_line):
+        clean_txt = sequence_to_text(int_line)
+        return clean_txt
 
     def cache_read_txt_features(self, txtpath, npzfile=None, npzpath=None):
         if npzfile is None or "raw_txt" not in npzfile:
