@@ -83,6 +83,7 @@ class wavfile_caching_mel_tbptt_iterator(object):
     def __init__(self, wavfile_list, txtfile_list,
                  batch_size,
                  truncation_length,
+                 clean_names,
                  wav_scale = 2 ** 15,
                  window_size=512,
                  window_step=128,
@@ -92,7 +93,6 @@ class wavfile_caching_mel_tbptt_iterator(object):
                  upper_edge_hertz=7800.0,
                  start_index=0,
                  stop_index=None,
-                 clean_names=["english_cleaners", "rulebased_g2p_cleaners"],
                  cache_dir_base="/Tmp/kastner/tfbldr_cache",
                  shuffle=False, random_state=None):
          self.wavfile_list = wavfile_list
@@ -118,31 +118,32 @@ class wavfile_caching_mel_tbptt_iterator(object):
              raise ValueError("Must pass random_state in")
          if txtfile_list is not None:
              # try to match every txt file and every wav file by name
-             wv_bases = sorted([str(os.sep).join(wv.split(os.sep)[:-1]) for wv in self.wavfile_list])
-             tx_bases = sorted([str(os.sep).join(tx.split(os.sep)[:-1]) for tx in self.txtfile_list])
-             wv_names = sorted([wv.split(os.sep)[-1] for wv in self.wavfile_list])
-             tx_names = sorted([tx.split(os.sep)[-1] for tx in self.txtfile_list])
+             wv_names_and_bases = sorted([(wv.split(os.sep)[-1], str(os.sep).join(wv.split(os.sep)[:-1])) for wv in self.wavfile_list])
+             tx_names_and_bases = sorted([(tx.split(os.sep)[-1], str(os.sep).join(tx.split(os.sep)[:-1])) for tx in self.txtfile_list])
              wv_i = 0
              tx_i = 0
              wv_match = []
              tx_match = []
-             while True:
-                 if tx_i >= len(tx_names) or wv_i >= len(wv_names):
-                     break
-                 if "." in tx_names[tx_i]:
-                     tx_part = ".".join(tx_names[tx_i].split(".")[:1])
+             wv_lu = {}
+             tx_lu = {}
+             for txnb in tx_names_and_bases:
+                 if "." in txnb[0]:
+                     tx_part = ".".join(txnb[0].split(".")[:1])
                  else:
                      # support txt files with no ext
-                     tx_part = tx_names[tx_i]
-                 wv_part = ".".join(wv_names[wv_i].split(".")[:1])
-                 if wv_part == tx_part:
-                     wv_match.append(wv_bases[wv_i] + os.sep + wv_names[wv_i])
-                     tx_match.append(tx_bases[tx_i] + os.sep + tx_names[tx_i])
-                     wv_i += 1
-                     tx_i += 1
-                 else:
-                     print("WAV AND TXT NAMES DIDN'T MATCH AT STEP, ADD LOGIC")
-                     from IPython import embed; embed(); raise ValueError()
+                     tx_part = txnb[0]
+                 tx_lu[tx_part] = txnb[1] + os.sep + txnb[0]
+
+             for wvnb in wv_names_and_bases:
+                 wv_part = ".".join(wvnb[0].split(".")[:1])
+                 wv_lu[wv_part] = wvnb[1] + os.sep + wvnb[0]
+
+             # set of in common keys
+             shared_k = sorted([k for k in wv_lu.keys() if k in tx_lu])
+
+             for k in shared_k:
+                 wv_match.append(wv_lu[k])
+                 tx_match.append(tx_lu[k])
              self.wavfile_list = wv_match
              self.txtfile_list = tx_match
          self.cache = self.cache_dir_base + os.sep + "-".join(self.wavfile_list[0].split(os.sep)[1:-1])
@@ -332,7 +333,7 @@ class wavfile_caching_mel_tbptt_iterator(object):
         return int_txt
 
     def inverse_transform_txt(self, int_line):
-        clean_txt = sequence_to_text(int_line)
+        clean_txt = sequence_to_text(int_line, self.clean_names)
         return clean_txt
 
     def cache_read_txt_features(self, txtpath, npzfile=None, npzpath=None):
@@ -341,7 +342,7 @@ class wavfile_caching_mel_tbptt_iterator(object):
                 lines = f.readlines()
             raw_txt = lines[0]
             int_txt = text_to_sequence(raw_txt, self.clean_names)
-            clean_txt = sequence_to_text(int_txt)
+            clean_txt = sequence_to_text(int_txt, self.clean_names)
             if npzfile is not None and "raw_txt" not in npzfile:
                 d = {k: v for k, v in npzfile.items()}
                 npzfile.close()

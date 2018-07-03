@@ -54,9 +54,13 @@ gl_steps = 100
 
 itr_random_state = np.random.RandomState(3122)
 if args.input_type == "rule":
-    itr = wavfile_caching_mel_tbptt_iterator(wavfiles, txtfiles, batch_size, seq_len, start_index=.95, shuffle=True, random_state=itr_random_state)
+    itr = wavfile_caching_mel_tbptt_iterator(wavfiles, txtfiles, batch_size, seq_len,
+                                             clean_names=["english_cleaners", "rulebased_g2p_cleaners"],
+                                             start_index=.95, shuffle=True, random_state=itr_random_state)
 elif args.input_type == "text":
-    itr = wavfile_caching_mel_tbptt_iterator(wavfiles, txtfiles, batch_size, seq_len, clean_names=["english_cleaners",], start_index=.95, shuffle=True, random_state=itr_random_state)
+    itr = wavfile_caching_mel_tbptt_iterator(wavfiles, txtfiles, batch_size, seq_len,
+                                             clean_names=["english_cleaners",],
+                                             start_index=.95, shuffle=True, random_state=itr_random_state)
 else:
     raise ValueError("Unknown argument to --inp {}".format(args.input_type))
 

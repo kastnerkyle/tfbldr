@@ -1,19 +1,25 @@
 """ from https://github.com/keithito/tacotron """
 import re
 import cleaners
-from symbols import symbols
+from symbols import char_symbols
+from symbols import phone_symbols
 
 
 # Mappings from symbol to numeric ID and vice versa:
-_symbol_to_id = {s: i for i, s in enumerate(symbols)}
-_id_to_symbol = {i: s for i, s in enumerate(symbols)}
+_char_symbol_to_id = {s: i for i, s in enumerate(char_symbols)}
+_id_to_char_symbol = {i: s for i, s in enumerate(char_symbols)}
+_phone_symbol_to_id = {s: i for i, s in enumerate(phone_symbols)}
+_id_to_phone_symbol = {i: s for i, s in enumerate(phone_symbols)}
 
 # Regular expression matching text enclosed in curly braces:
 _curly_re = re.compile(r'(.*?)\{(.+?)\}(.*)')
 
 
 def get_vocabulary_size(cleaner_names):
-  return len(_symbol_to_id)
+  if any(["phone" in name for name in cleaner_names]):
+      return len(_phone_symbol_to_id)
+  else:
+      return len(_char_symbol_to_id)
 
 
 def text_to_sequence(text, cleaner_names):
@@ -29,34 +35,72 @@ def text_to_sequence(text, cleaner_names):
     Returns:
       List of integers corresponding to the symbols in the text
   '''
-  sequence = []
+  if any(["rule" in name for name in cleaner_names]):
+      raise ValueError("IMPLEMENT RULE TRANFORM")
+      sequence = []
+      # Check for curly braces and treat their contents as ARPAbet:
+      while len(text):
+        m = _curly_re.match(text)
+        if not m:
+          sequence += _symbols_to_sequence(_clean_text(text, cleaner_names))
+          break
+        sequence += _symbols_to_sequence(_clean_text(m.group(1), cleaner_names))
+        sequence += _arpabet_to_sequence(m.group(2))
+        text = m.group(3)
 
-  # Check for curly braces and treat their contents as ARPAbet:
-  while len(text):
-    m = _curly_re.match(text)
-    if not m:
-      sequence += _symbols_to_sequence(_clean_text(text, cleaner_names))
-      break
-    sequence += _symbols_to_sequence(_clean_text(m.group(1), cleaner_names))
-    sequence += _arpabet_to_sequence(m.group(2))
-    text = m.group(3)
+      # Append EOS token
+      sequence.append(_symbol_to_id['~'])
+      return sequence
+  elif any(["phone" in name for name in cleaner_names]):
+      sequence = []
+      # Check for curly braces and treat their contents as ARPAbet:
+      while len(text):
+        m = _curly_re.match(text)
+        if not m:
+          sequence += _phone_symbols_to_sequence(_clean_text(text, cleaner_names))
+          break
+        sequence += _phone_symbols_to_sequence(_clean_text(m.group(1), cleaner_names))
+        sequence += _arpabet_to_sequence(m.group(2))
+        text = m.group(3)
+      # Append EOS token
+      sequence.append(_phone_symbol_to_id['~'])
+      return sequence
+  else:
+      sequence = []
+      # Check for curly braces and treat their contents as ARPAbet:
+      while len(text):
+        m = _curly_re.match(text)
+        if not m:
+          sequence += _symbols_to_sequence(_clean_text(text, cleaner_names))
+          break
+        sequence += _symbols_to_sequence(_clean_text(m.group(1), cleaner_names))
+        sequence += _arpabet_to_sequence(m.group(2))
+        text = m.group(3)
 
-  # Append EOS token
-  sequence.append(_symbol_to_id['~'])
-  return sequence
+      # Append EOS token
+      sequence.append(_symbol_to_id['~'])
+      return sequence
 
 
-def sequence_to_text(sequence):
+def sequence_to_text(sequence, cleaner_names):
   '''Converts a sequence of IDs back to a string'''
-  result = ''
-  for symbol_id in sequence:
-    if symbol_id in _id_to_symbol:
-      s = _id_to_symbol[symbol_id]
-      # Enclose ARPAbet back in curly braces:
-      if len(s) > 1 and s[0] == '@':
-        s = '{%s}' % s[1:]
-      result += s
-  return result.replace('}{', ' ')
+  if any(["rule" in name for name in cleaner_names]):
+      raise ValueError("IMPLEMENT RULE TRANFORM")
+  elif any(["phone" in name for name in cleaner_names]):
+      result = ""
+      for symbol_id in sequence:
+          s = _id_to_phone_symbol[symbol_id]
+      return result
+  else:
+      result = ''
+      for symbol_id in sequence:
+        if symbol_id in _id_to_symbol:
+          s = _id_to_char_symbol[symbol_id]
+          # Enclose ARPAbet back in curly braces:
+          if len(s) > 1 and s[0] == '@':
+            s = '{%s}' % s[1:]
+          result += s
+      return result.replace('}{', ' ')
 
 
 def _clean_text(text, cleaner_names):
@@ -68,13 +112,21 @@ def _clean_text(text, cleaner_names):
   return text
 
 
-def _symbols_to_sequence(symbols):
-  return [_symbol_to_id[s] for s in symbols if _should_keep_symbol(s)]
+def _char_symbols_to_sequence(symbols):
+  return [_char_symbol_to_id[s] for s in symbols if _char_should_keep_symbol(s)]
+
+
+def _phone_symbols_to_sequence(symbols):
+  new = [ssi for ss in symbols.split(" ") for ssi in ss.strip().split("@")[1:] + [" "]][:-1]
+  return [_phone_symbol_to_id[s] for s in new if _phone_should_keep_symbol(s)]
 
 
 def _arpabet_to_sequence(text):
   return _symbols_to_sequence(['@' + s for s in text.split()])
 
 
-def _should_keep_symbol(s):
-  return s in _symbol_to_id and s is not '_' and s is not '~'
+def _char_should_keep_symbol(s):
+  return s in _char_symbol_to_id and s is not '_' and s is not '~'
+
+def _phone_should_keep_symbol(s):
+  return s in _phone_symbol_to_id and s is not '_' and s is not '~'

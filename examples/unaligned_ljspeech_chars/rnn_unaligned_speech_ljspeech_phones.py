@@ -27,11 +27,10 @@ from tfbldr import scan
 seq_len = 256
 batch_size = 64
 window_mixtures = 10
-output_mixtures = 20
 cell_dropout = 1.
 #noise_scale = 8.
 prenet_units = 128
-n_filts = 256
+n_filts = 128
 n_stacks = 3
 enc_units = 128
 dec_units = 512
@@ -47,14 +46,15 @@ ljspeech = rsync_fetch(fetch_ljspeech, "leto01")
 
 # THESE ARE CANNOT BE PAIRED (SOME MISSING), ITERATOR PAIRS THEM UP BY NAME
 wavfiles = ljspeech["wavfiles"]
-txtfiles = ljspeech["txtfiles"]
+phonefiles = ljspeech["phonefiles"]
 
 # THESE HAVE TO BE THE SAME TO ENSURE SPLIT IS CORRECT
 train_random_state = np.random.RandomState(3122)
 valid_random_state = np.random.RandomState(3122)
 
-train_itr = wavfile_caching_mel_tbptt_iterator(wavfiles, txtfiles, batch_size, seq_len, stop_index=.95, clean_names=["english_cleaners",], shuffle=True, random_state=train_random_state)
-valid_itr = wavfile_caching_mel_tbptt_iterator(wavfiles, txtfiles, batch_size, seq_len, start_index=.95, clean_names=["english_cleaners",], shuffle=True, random_state=valid_random_state)
+train_itr = wavfile_caching_mel_tbptt_iterator(wavfiles, phonefiles, batch_size, seq_len, stop_index=.95, clean_names=["english_phone_cleaners",], shuffle=True, random_state=train_random_state)
+valid_itr = wavfile_caching_mel_tbptt_iterator(wavfiles, phonefiles, batch_size, seq_len, start_index=.95, clean_names=["english_phone_cleaners",], shuffle=True, random_state=valid_random_state)
+
 # STRONG CHECK TO ENSURE NO OVERLAP IN TRAIN/VALID
 for tai in train_itr.all_indices_:
     assert tai not in valid_itr.all_indices_
@@ -106,8 +106,7 @@ def create_graph():
                                 name="text_emb")
         conv_text = SequenceConv1dStack([text_e], [emb_dim], n_filts, bn_flag,
                                         n_stacks=n_stacks,
-                                        #kernel_sizes=[(1, 1), (3, 3), (5, 5)],
-                                        kernel_sizes=[(5, 5)],
+                                        kernel_sizes=[(1, 1), (3, 3), (5, 5)],
                                         name="enc_conv1", random_state=random_state)
 
         bitext = BiLSTMLayer([conv_text], [n_filts],

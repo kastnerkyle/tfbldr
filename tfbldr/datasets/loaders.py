@@ -357,11 +357,19 @@ def fetch_ljspeech(path="/Tmp/kastner/lj_speech/LJSpeech-1.0/"):
     if not os.path.exists(path + "wavs"):
         e = IOError("No wav files found in {}, under {}".format(path, path + "wavs"), None, path + "wavs")
         raise e
+    if not os.path.exists(path + "txts"):
+        e = IOError("No txt files found in {}, under {}".format(path, path + "txts"), None, path + "txts")
+        raise e
+    if not os.path.exists(path + "phones"):
+        e = IOError("No phone files found in {}, under {}".format(path, path + "phones"), None, path + "phones")
+        raise e
     wavfiles = [path + "wavs/" + ff for ff in os.listdir(path + "wavs/")]
     txtfiles = [path + "txts/" + ff for ff in os.listdir(path + "txts/")]
+    phonefiles = [path + "phones/" + ff for ff in os.listdir(path + "phones/")]
     d = {}
     d["wavfiles"] = wavfiles
     d["txtfiles"] = txtfiles
+    d["phonefiles"] = phonefiles
     return d
 
 

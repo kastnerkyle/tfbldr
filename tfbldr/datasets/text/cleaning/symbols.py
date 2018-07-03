@@ -7,12 +7,13 @@ The default is a set of ASCII characters that works well for English or text tha
 
 import cmudict
 
-_pad        = '_'
-_eos        = '~'
+_pad = '_'
+_eos = '~'
 # PUT IT BACK!!!
-_characters = 'abcdefghijklmnopqrstuvwxyz&^!\',-.:? '
 
-#_characters = 'abcdefghijklmnopqrstuvwxyz!\',-.:? '
+_phones = ['aa', 'ae', 'ah', 'ao', 'aw', 'ay', 'b', 'ch', 'd', 'dh', 'eh', 'er', 'ey', 'f', 'g', 'hh', 'ih', 'iy', 'jh', 'k', 'l', 'm', 'n', 'ng', 'ow', 'oy', 'p', 'r', 's', 'sh', 't', 'th', 'uh', 'uw', 'v', 'w', 'y', 'z', 'zh', ' ']
+_characters = 'abcdefghijklmnopqrstuvwxyz!\',-.:? '
+_rules = 'abcdefghijklmnopqrstuvwxyz&^!\',-.:? '
 
 #_characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!\',-.:? '
 
@@ -20,4 +21,6 @@ _characters = 'abcdefghijklmnopqrstuvwxyz&^!\',-.:? '
 #_arpabet = ['@' + s for s in cmudict.valid_symbols]
 
 # Export all symbols:
-symbols = [_pad, _eos] + list(_characters)# + _arpabet
+char_symbols = [_pad, _eos] + list(_characters)# + _arpabet
+phone_symbols = [_pad, _eos] + list(_phones)# + _arpabet
+rule_symbols = [_pad, _eos] + list(_rules)# + _arpabet

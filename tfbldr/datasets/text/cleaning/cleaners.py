@@ -140,3 +140,8 @@ def english_cleaners(text):
   text = collapse_spurious(text)
   text = collapse_whitespace(text)
   return text
+
+
+def english_phone_cleaners(text):
+  '''Pipeline for English phones.'''
+  return text
