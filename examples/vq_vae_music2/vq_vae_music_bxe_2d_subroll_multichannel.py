@@ -22,6 +22,7 @@ from data_utils import music_pitch_and_chord_to_imagelike_and_label
 
 josquin = fetch_josquin()
 images, labels, lookups = music_pitch_and_chord_to_imagelike_and_label(josquin)
+from IPython import embed; embed(); raise ValueError()
 
 image_data = images
 """

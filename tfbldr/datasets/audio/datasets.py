@@ -5,6 +5,7 @@ from .audio_tools import iterate_invert_spectrogram
 from .audio_tools import soundsc
 from ..text.cleaning import text_to_sequence
 from ..text.cleaning import sequence_to_text
+from ..text.cleaning import cleaners
 from ..text.cleaning import get_vocabulary_size
 
 from ...core import get_logger
@@ -225,8 +226,14 @@ class wavfile_caching_mel_tbptt_iterator(object):
                     try:
                         self.current_read_[bi] = self.cache_read_wav_and_txt_features(self.wavfile_list[self.current_indices_[bi]], self.txtfile_list[self.current_indices_[bi]])
                     except:
-                        print("FILE / TEXT READ ERROR")
-                        from IPython import embed; embed(); raise ValueError()
+
+                        logger.info("FILE / TEXT READ ERROR {}:{}".format(self.wavfile_list[self.current_indices_[bi]], self.txtfile_list[self.current_indices_[bi]]))
+                        try:
+                            self.current_read_[bi] = self.cache_read_wav_and_txt_features(self.wavfile_list[self.current_indices_[bi]], self.txtfile_list[self.current_indices_[bi]], force_refresh=True)
+                            logger.info("CORRECTED FILE / TEXT READ ERROR VIA CACHE REFRESH")
+                        except:
+                            logger.info("STILL FILE / TEXT READ ERROR AFTER REFRESH {}:{}".format(self.wavfile_list[self.current_indices_[bi]], self.txtfile_list[self.current_indices_[bi]]))
+                            continue
                     wf, txf = self.current_read_[bi]
                     if len(wf) > self.truncation_length:
                         break
@@ -309,10 +316,10 @@ class wavfile_caching_mel_tbptt_iterator(object):
             npzpath = self.cache + os.sep + fname + melpart
         return npzpath
 
-    def cache_read_wav_features(self, wavpath, return_npz=False):
+    def cache_read_wav_features(self, wavpath, return_npz=False, force_refresh=False):
         fname = ".".join(wavpath.split(os.sep)[-1].split(".")[:-1])
         npzpath = self._fpathmaker(fname)
-        if not os.path.exists(npzpath):
+        if force_refresh or not os.path.exists(npzpath):
             sr, d = wavfile.read(wavpath)
             d = d.astype("float64")
             d = d / float(self.wav_scale)
@@ -328,22 +335,51 @@ class wavfile_caching_mel_tbptt_iterator(object):
         else:
             return log_mels
 
-    def transform_txt(self, line):
-        int_txt = text_to_sequence(line, self.clean_names)
+    def transform_txt(self, line, txt_line=None):
+        if txt_line == None:
+            int_txt = text_to_sequence(line, self.clean_names)
+        else:
+            clean_orig_chunks = txt_line.split(" ")
+            raw_chunks = line.split(" ")
+            if len(raw_chunks) == len(clean_orig_chunks):
+                mutated = raw_chunks
+                for chunk_i in range(len(mutated)):
+                    for special in "!,:?":
+                        if special in clean_orig_chunks[chunk_i]:
+                            if clean_orig_chunks[chunk_i][0] == special:
+                                mutated[chunk_i] = special + mutated[chunk_i]
+                            elif clean_orig_chunks[chunk_i][-1] == special:
+                                mutated[chunk_i] = mutated[chunk_i] + special
+                            #if it's in the middle we don't really know what to do... skip it
+                res_txt = " ".join(mutated)
+            else:
+                res_txt = line
+            int_txt = text_to_sequence(res_txt, self.clean_names)
         return int_txt
 
     def inverse_transform_txt(self, int_line):
         clean_txt = sequence_to_text(int_line, self.clean_names)
         return clean_txt
 
-    def cache_read_txt_features(self, txtpath, npzfile=None, npzpath=None):
+    def cache_read_txt_features(self, txtpath, npzfile=None, npzpath=None, force_refresh=False):
         if npzfile is None or "raw_txt" not in npzfile:
             with open(txtpath, "rb") as f:
                 lines = f.readlines()
             raw_txt = lines[0]
-            int_txt = text_to_sequence(raw_txt, self.clean_names)
+            # insert commas, semicolons, punctuation, etc from original transcript...
+            if "english_phone_cleaners" in self.clean_names:
+                if len(lines) < 2:
+                    raise ValueError("Original text not commented on second line, necessary for phone transcript")
+                # skip '# '
+                orig_txt = lines[1][2:]
+                clean_orig_txt = cleaners.english_cleaners(orig_txt)
+                int_txt = self.transform_txt(raw_txt, clean_orig_txt)
+            else:
+                int_txt = text_to_sequence(raw_txt, self.clean_names)
+
             clean_txt = sequence_to_text(int_txt, self.clean_names)
-            if npzfile is not None and "raw_txt" not in npzfile:
+
+            if force_refresh or (npzfile is not None and "raw_txt" not in npzfile):
                 d = {k: v for k, v in npzfile.items()}
                 npzfile.close()
                 d["raw_txt"] = raw_txt
@@ -355,8 +391,8 @@ class wavfile_caching_mel_tbptt_iterator(object):
         int_txt = npzfile["int_txt"]
         return int_txt
 
-    def cache_read_wav_and_txt_features(self, wavpath, txtpath):
-        wavfeats, npzfile, npzpath = self.cache_read_wav_features(wavpath, return_npz=True)
-        txtfeats = self.cache_read_txt_features(txtpath, npzfile=npzfile, npzpath=npzpath)
+    def cache_read_wav_and_txt_features(self, wavpath, txtpath, force_refresh=False):
+        wavfeats, npzfile, npzpath = self.cache_read_wav_features(wavpath, return_npz=True, force_refresh=force_refresh)
+        txtfeats = self.cache_read_txt_features(txtpath, npzfile=npzfile, npzpath=npzpath, force_refresh=force_refresh)
         npzfile.close()
         return wavfeats, txtfeats

@@ -8,8 +8,9 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import copy
-from tfbldr.datasets import fetch_ljspeech
+from tfbldr.datasets import rsync_fetch, fetch_ljspeech
 from tfbldr.datasets import wavfile_caching_mel_tbptt_iterator
+from tfbldr.datasets.text import pronounce_chars
 from scipy.io import wavfile
 from tfbldr.datasets.audio import soundsc
 from tfbldr.datasets.audio import stft
@@ -20,9 +21,11 @@ parser = argparse.ArgumentParser()
 parser.add_argument('direct_model', nargs=1, default=None)
 parser.add_argument('--model', dest='model_path', type=str, default=None)
 parser.add_argument('--seed', dest='seed', type=int, default=1999)
-parser.add_argument('--test', dest='test', type=str, default="quote")
-parser.add_argument('--inp', dest='input_type', type=str, default="rule")
-parser.add_argument('--bs', dest='batch_size', type=int, default=48)
+parser.add_argument('--test', dest='test', type=str, default="valid")
+parser.add_argument('--inp', dest='input_type', type=str, default="phone")
+parser.add_argument('--bs', dest='batch_size', type=int, default=64)
+parser.add_argument('--sonify', dest='sonify', type=int, default=100)
+parser.add_argument('--gl', dest='gl', type=int, default=100)
 args = parser.parse_args()
 if args.model_path == None:
     if args.direct_model == None:
@@ -39,9 +42,13 @@ config = tf.ConfigProto(
     device_count={'GPU': 0}
 )
 """
-ljspeech = fetch_ljspeech()
+ljspeech = rsync_fetch(fetch_ljspeech, "leto01")
+#ljspeech = fetch_ljspeech()
 wavfiles = ljspeech["wavfiles"]
-txtfiles = ljspeech["txtfiles"]
+if args.input_type == "phone":
+    txtfiles = ljspeech["phonefiles"]
+else:
+    txtfiles = ljspeech["txtfiles"]
 
 batch_size = args.batch_size
 seq_len = 256
@@ -49,8 +56,8 @@ window_mixtures = 10
 enc_units = 128
 dec_units = 512
 emb_dim = 15
-sonify_steps = 100
-gl_steps = 100
+sonify_steps = args.sonify
+gl_steps = args.gl
 
 itr_random_state = np.random.RandomState(3122)
 if args.input_type == "rule":
@@ -61,13 +68,17 @@ elif args.input_type == "text":
     itr = wavfile_caching_mel_tbptt_iterator(wavfiles, txtfiles, batch_size, seq_len,
                                              clean_names=["english_cleaners",],
                                              start_index=.95, shuffle=True, random_state=itr_random_state)
+elif args.input_type == "phone":
+    itr = wavfile_caching_mel_tbptt_iterator(wavfiles, txtfiles, batch_size, seq_len,
+                                             clean_names=["english_phone_cleaners",],
+                                             start_index=.95, shuffle=True, random_state=itr_random_state)
 else:
     raise ValueError("Unknown argument to --inp {}".format(args.input_type))
 
 mels, mel_mask, text, text_mask, reset = itr.next_masked_batch()
 if args.test == "valid":
     n_to_sample = 4
-    sonify_steps = 1000
+    sonify_steps = 100
     gl_steps = 100
 elif args.test in ["basic", "quote", "full", "taco_prosody", "taco_small", "custom"]:
     with open("{}_test.txt".format(args.test)) as f:
@@ -77,8 +88,13 @@ elif args.test in ["basic", "quote", "full", "taco_prosody", "taco_small", "cust
     print("lines to sample:")
     int_lines = []
     for l in lines:
-        int_lines.append(itr.transform_txt(l))
-        print(itr.inverse_transform_txt(itr.transform_txt(l)))
+        if args.input_type == "phone":
+            l_p = pronounce_chars(l)
+            int_lines.append(itr.transform_txt(l_p, l))
+            print(itr.inverse_transform_txt(int_lines[-1]))
+        else:
+            int_lines.append(itr.transform_txt(l))
+            print(itr.inverse_transform_txt(int_lines[-1]))
     longest = max([len(il) for il in int_lines])
     text = np.zeros((longest, batch_size, 1))
     text_mask = np.zeros((longest, batch_size))

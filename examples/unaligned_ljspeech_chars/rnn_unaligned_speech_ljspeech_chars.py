@@ -31,7 +31,7 @@ output_mixtures = 20
 cell_dropout = 1.
 #noise_scale = 8.
 prenet_units = 128
-n_filts = 256
+n_filts = 128
 n_stacks = 3
 enc_units = 128
 dec_units = 512
@@ -106,8 +106,8 @@ def create_graph():
                                 name="text_emb")
         conv_text = SequenceConv1dStack([text_e], [emb_dim], n_filts, bn_flag,
                                         n_stacks=n_stacks,
-                                        #kernel_sizes=[(1, 1), (3, 3), (5, 5)],
-                                        kernel_sizes=[(5, 5)],
+                                        kernel_sizes=[(1, 1), (3, 3), (5, 5)],
+                                        #kernel_sizes=[(5, 5)],
                                         name="enc_conv1", random_state=random_state)
 
         bitext = BiLSTMLayer([conv_text], [n_filts],

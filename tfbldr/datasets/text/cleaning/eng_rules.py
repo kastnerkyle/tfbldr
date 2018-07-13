@@ -6,7 +6,7 @@ import json
 import os
 from collections import OrderedDict
 from unidecode import unidecode
-
+import gzip
 
 punct_rules = """
 [ ]'=/ /;
@@ -1138,101 +1138,37 @@ def rule_g2p(string, hyphenate=True):
         abs_final_rules.append(truly_final_rules[-1])
     return abs_final_phones, abs_final_rules
 
-if os.path.exists("cmudict.json"):
-    # get cmudict from https://github.com/hyperreality/Poetry-Tools/tree/master/poetrytools/cmudict
-    with open(os.path.join(os.path.dirname(__file__), "cmudict.json")) as json_file:
-        cmu = json.load(json_file)
+cmu = None
 
-    g_set = set()
-    p_set = set()
-    for k, v in cmu.items():
-        g_set |= set(k)
-        p_set |= set(tuple(v[0]))
+def load_cmu():
+    cmupath = os.path.join(os.path.dirname(__file__), "cmudict.json.gz")
+    if not os.path.exists(cmupath):
+        raise ValueError("{} not found!".format(cmupath))
 
-    g_set = sorted(list(g_set))
-    p_set = sorted(list(p_set))
+    if os.path.exists(cmupath):
+        # get cmudict from https://github.com/hyperreality/Poetry-Tools/tree/master/poetrytools/cmudict
+        global cmu
+        with gzip.open(cmupath, "rb") as f:
+            cmu = json.loads(f.read().decode("ascii"))
 
-    new_p_lookup = {}
-    for p in p_set:
-        if "0" in p or "1" in p or "2" in p:
-            new_p_lookup[p] = p[:-1]
-        else:
-            new_p_lookup[p] = p
-
-    # http://www.dtic.mil/get-tr-doc/pdf?AD=ADA021929
-    # http://psych.colorado.edu/~kimlab/jurafskymartinch7draft.pdf
-    cmu_phones = sorted(list(set(new_p_lookup.values())))
-    arpabet_to_ipa = {"IY": "IY",
-                      "IH": "IH",
-                      "EY": "EY",
-                      "EH": "EH",
-                      "AE": "AE",
-                      "AA": "AA",
-                      "AO": "AO",
-                      "UH": "UH",
-                      "OW": "OW",
-                      "UW": "UW",
-                      "AH": "AH",
-                      "ER": "ER",
-                      "AY": "AY",
-                      "AW": "AW",
-                      "OY": "OY",
-                      "AX": "AX",
-                      "P": "P",
-                      "T": "T",
-                      "K": "K",
-                      "B": "B",
-                      "D": "D",
-                      "G": "G",
-                      "M": "M",
-                      "N": "N",
-                      "NG": "NX",
-                      "F": "F",
-                      "V": "V",
-                      "TH": "TH",
-                      "DH": "DH",
-                      "S": "S",
-                      "Z": "Z",
-                      "SH": "SH",
-                      "ZH": "ZH",
-                      "CH": "CH",
-                      "JH": "JH",
-                      "L": "L",
-                      "W": "W",
-                      "R": "R",
-                      "Y": "Y",
-                      "HH": "HH",
-                      # NO EQUIVALENT FOR "WH" in ARPABET :|
-                      }
-
-    # gotta replace by IPA compatible
-    new_cmu = {}
-    for k, v in cmu.items():
-        new_cmu[k.upper()] = [[arpabet_to_ipa[new_p_lookup[vi]] for vi in v[0]]]
-    cmu = new_cmu
 
 def remove_non_ascii(text):
     return unidecode(unicode(text, encoding = "utf-8"))
 
-def hybrid_g2p(line, force_upper=True, force_rule=False, hyphenate=False, verbose=False):
-    # hacky cleanup to avoid random errors
+
+def hybrid_g2p(line, verbose=False):
+    global cmu
+    if cmu is None:
+        load_cmu()
+
+    line = line.replace(",", "")
+    line = line.replace(";", "")
     line = line.replace('"', "")
     line = line.replace("[", "")
     line = line.replace("]", "")
-    line = line.replace(".", " . ")
-    line = line.replace("!", " ! ")
-    line = line.replace("?", " ? ")
-    line = line.replace(",", " , ")
-    line = line.replace(";", " , ")
-    line = line.replace(":", " , ")
-    if line[0] == "'":
-        line = line[1:]
-    if line[-1] == "'":
-        line = line[:-1]
-
-    out = []
-    if force_upper:
-        line = line.upper()
+    line = line.replace(".", "")
+    line = line.replace("!", "")
+    line = line.replace("?", "")
 
     if verbose:
         print(line)
@@ -1241,29 +1177,16 @@ def hybrid_g2p(line, force_upper=True, force_rule=False, hyphenate=False, verbos
     if verbose:
         print(word_split)
 
+    out = []
     for li in word_split:
-        try:
-            if li[0] == "'":
-                li = li[1:]
-
-            if li[-1] == "'":
-                li = li[:-1]
-
-            if li[0] == "-":
-                li = li[1:]
-
-            if li[-1] == "-":
-                li = li[:-1]
-        except IndexError:
-            continue
-
-        if li in cmu and not force_rule:
+        if li in cmu:
             ri = ([None], cmu[li][0])
+            # handle 's case?
         else:
             if verbose:
                 print(li)
             try:
-                ri = rule_g2p(li, hyphenate=False)
+                ri = rule_g2p(li.upper(), hyphenate=False)
             except IndexError:
                 print("Index Error: {}".format(li))
                 continue
@@ -1286,9 +1209,30 @@ def hybrid_g2p(line, force_upper=True, force_rule=False, hyphenate=False, verbos
                     continue
                 print("Replacement: {}".format(li))
                 # https://stackoverflow.com/questions/20078816/replace-non-ascii-characters-with-a-single-space
-                ri = rule_g2p(li, hyphenate=False)
+                ri = rule_g2p(li.upper(), hyphenate=False)
         out.append(ri)
-    return out
+    fin = []
+    for p in out:
+        if p[0] == [None]:
+            pi = p[1]
+        else:
+            pi = [i for i in p[1] if "<" not in i]
+            pi = " ".join(pi).split(" ")
+            if verbose:
+                print(p[0])
+        part = []
+        for pii in pi:
+            if "0" in pii:
+                pp = pii[:-1]
+            elif "1" in pii:
+                pp = pii[:-1]
+            elif "2" in pii:
+                pp = pii[:-1]
+            else:
+                pp = pii
+            part.append("@" + pp)
+        fin.append("".join(part))
+    return str(" ".join(fin).lower())
 
 
 def rulebased_g2p(line, force_upper=True, hyphenate=True, verbose=False):

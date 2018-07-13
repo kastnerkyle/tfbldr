@@ -27,7 +27,7 @@ from tfbldr import scan
 seq_len = 256
 batch_size = 64
 window_mixtures = 10
-cell_dropout = 1.
+cell_dropout = .8
 #noise_scale = 8.
 prenet_units = 128
 n_filts = 128
@@ -189,8 +189,7 @@ def create_graph():
         cc = (pred - out_mels) ** 2
         #cc = out_mel_mask[..., None] * cc
         #loss = tf.reduce_sum(tf.reduce_sum(cc, axis=-1)) / tf.reduce_sum(out_mel_mask)
-
-        loss = tf.reduce_mean(tf.reduce_sum(cc, axis=-1))# / tf.reduce_sum(out_mel_mask)
+        loss = tf.reduce_mean(tf.reduce_sum(cc, axis=-1))
 
         learning_rate = 0.0001
         #steps = tf.Variable(0.)

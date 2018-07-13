@@ -104,7 +104,7 @@ def music_pitch_and_chord_to_imagelike_and_label(music_dict, divisible_by=4, aug
             qp = qp[:len(qcf)]
         assert len(qp) == len(qcf)
         total_len = len(qp)
-        # 2 bars at a time, stepping by 1 bar at a time
+        # 1 bars at a time, stepping by 1 bars at a time
         step = 16
         size = 16
         pos = np.arange(0, total_len, step)

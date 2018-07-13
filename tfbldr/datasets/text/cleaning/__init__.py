@@ -3,6 +3,7 @@ import re
 import cleaners
 from symbols import char_symbols
 from symbols import phone_symbols
+from eng_rules import hybrid_g2p, rulebased_g2p
 
 
 # Mappings from symbol to numeric ID and vice versa:
@@ -71,14 +72,14 @@ def text_to_sequence(text, cleaner_names):
       while len(text):
         m = _curly_re.match(text)
         if not m:
-          sequence += _symbols_to_sequence(_clean_text(text, cleaner_names))
+          sequence += _char_symbols_to_sequence(_clean_text(text, cleaner_names))
           break
-        sequence += _symbols_to_sequence(_clean_text(m.group(1), cleaner_names))
+        sequence += _char_symbols_to_sequence(_clean_text(m.group(1), cleaner_names))
         sequence += _arpabet_to_sequence(m.group(2))
         text = m.group(3)
 
       # Append EOS token
-      sequence.append(_symbol_to_id['~'])
+      sequence.append(_char_symbol_to_id['~'])
       return sequence
 
 
@@ -88,13 +89,20 @@ def sequence_to_text(sequence, cleaner_names):
       raise ValueError("IMPLEMENT RULE TRANFORM")
   elif any(["phone" in name for name in cleaner_names]):
       result = ""
+      space_id = _phone_symbol_to_id[" "]
+      pad_id = _phone_symbol_to_id["_"]
+      eos_id = _phone_symbol_to_id["~"]
+      special_ids = [_phone_symbol_to_id[special] for special in "!,:?"]
       for symbol_id in sequence:
-          s = _id_to_phone_symbol[symbol_id]
+          if symbol_id in [space_id, pad_id, eos_id] + special_ids:
+              result += _id_to_phone_symbol[symbol_id]
+          else:
+              result += "@" + _id_to_phone_symbol[symbol_id]
       return result
   else:
       result = ''
       for symbol_id in sequence:
-        if symbol_id in _id_to_symbol:
+        if symbol_id in _id_to_char_symbol:
           s = _id_to_char_symbol[symbol_id]
           # Enclose ARPAbet back in curly braces:
           if len(s) > 1 and s[0] == '@':
@@ -117,7 +125,20 @@ def _char_symbols_to_sequence(symbols):
 
 
 def _phone_symbols_to_sequence(symbols):
-  new = [ssi for ss in symbols.split(" ") for ssi in ss.strip().split("@")[1:] + [" "]][:-1]
+  new = []
+  for ss in symbols.split(" "):
+      if any([special in ss for special in "!,:?"]):
+          # special symbols only at start or back of chunk
+          if ss[0] in "!,:?":
+              for ssi in [ss[0]] + ss[1:].strip().split("@")[1:] + [" "]:
+                  new.append(ssi)
+          elif ss[-1] in "!,:?":
+              for ssi in ss[:-1].strip().split("@")[1:] + [ss[-1]] + [" "]:
+                  new.append(ssi)
+      else:
+          for ssi in ss.strip().split("@")[1:] + [" "]:
+              new.append(ssi)
+  #new = [ssi for ss in symbols.split(" ") for ssi in ss.strip().split("@")[1:] + [" "]][:-1]
   return [_phone_symbol_to_id[s] for s in new if _phone_should_keep_symbol(s)]
 
 

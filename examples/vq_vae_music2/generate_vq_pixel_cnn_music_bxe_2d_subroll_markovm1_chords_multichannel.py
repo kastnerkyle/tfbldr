@@ -21,6 +21,7 @@ parser.add_argument('pixelcnn_model', nargs=1, default=None)
 parser.add_argument('vqvae_model', nargs=1, default=None)
 parser.add_argument('--seed', dest='seed', type=int, default=1999)
 parser.add_argument('--temp', dest='temp', type=float, default=1.)
+parser.add_argument('--num', dest='num', type=int, default=16)
 parser.add_argument('--chords', dest='chords', type=str, default=None,
                     help="Example, `--chords=I,I6,IV,V7,I`")
 args = parser.parse_args()
@@ -28,7 +29,7 @@ vqvae_model_path = args.vqvae_model[0]
 pixelcnn_model_path = args.pixelcnn_model[0]
 
 num_to_generate = 160
-num_each = 16
+num_each = args.num
 random_state = np.random.RandomState(args.seed)
 
 d = np.load("vq_vae_encoded_music_2d_subroll_multichannel.npz")
@@ -135,5 +136,5 @@ with tf.Session(config=config) as sess2:
 x_rec[x_rec > 0.5] = 1.
 x_rec[x_rec <= 0.5] = 0.
 
-dump_subroll_samples(x_rec, sample_labels, num_each, args.seed, args.temp, args.chords, offset_to_pitch, label_to_chord_function, tag="markovm1chords")
+dump_subroll_samples(x_rec, sample_labels, num_each, args.seed, args.temp, args.chords, offset_to_pitch, label_to_chord_function, tag="markovm1")
 from IPython import embed; embed(); raise ValueError()
