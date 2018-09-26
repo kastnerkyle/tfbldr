@@ -46,14 +46,20 @@ ljspeech = rsync_fetch(fetch_ljspeech, "leto01")
 
 # THESE ARE CANNOT BE PAIRED (SOME MISSING), ITERATOR PAIRS THEM UP BY NAME
 wavfiles = ljspeech["wavfiles"]
-phonefiles = ljspeech["phonefiles"]
+jsonfiles = ljspeech["jsonfiles"]
 
 # THESE HAVE TO BE THE SAME TO ENSURE SPLIT IS CORRECT
 train_random_state = np.random.RandomState(3122)
 valid_random_state = np.random.RandomState(3122)
 
-train_itr = wavfile_caching_mel_tbptt_iterator(wavfiles, phonefiles, batch_size, seq_len, stop_index=.95, clean_names=["english_phone_pause_cleaners",], shuffle=True, random_state=train_random_state)
-valid_itr = wavfile_caching_mel_tbptt_iterator(wavfiles, phonefiles, batch_size, seq_len, start_index=.95, clean_names=["english_phone_pause_cleaners",], shuffle=True, random_state=valid_random_state)
+train_itr = wavfile_caching_mel_tbptt_iterator(wavfiles, jsonfiles, batch_size, seq_len, stop_index=.95, shuffle=True, random_state=train_random_state)
+valid_itr = wavfile_caching_mel_tbptt_iterator(wavfiles, jsonfiles, batch_size, seq_len, start_index=.95, shuffle=True, random_state=valid_random_state)
+
+"""
+for i in range(10000):
+    print(i)
+    mels, mel_mask, text, text_mask, mask, mask_mask, reset = train_itr.next_masked_batch()
+"""
 
 # STRONG CHECK TO ENSURE NO OVERLAP IN TRAIN/VALID
 for tai in train_itr.all_indices_:
@@ -62,7 +68,8 @@ for vai in valid_itr.all_indices_:
     assert vai not in train_itr.all_indices_
 
 random_state = np.random.RandomState(1442)
-vocabulary_size = train_itr.vocabulary_size
+# use the max of the two blended types...
+vocabulary_size = max(train_itr.vocabulary_sizes)
 output_size = train_itr.n_mel_filters
 
 def create_graph():
@@ -72,6 +79,9 @@ def create_graph():
 
         text = tf.placeholder(tf.float32, shape=[None, batch_size, 1])
         text_mask = tf.placeholder(tf.float32, shape=[None, batch_size])
+
+        mask = tf.placeholder(tf.float32, shape=[None, batch_size, 1])
+        mask_mask = tf.placeholder(tf.float32, shape=[None, batch_size])
 
         mels = tf.placeholder(tf.float32, shape=[None, batch_size, output_size])
         mel_mask = tf.placeholder(tf.float32, shape=[None, batch_size])
@@ -102,13 +112,22 @@ def create_graph():
                           dropout_flag_prob_keep=prenet_dropout, name="prenet2",
                           random_state=random_state)
 
-        text_e, emb = Embedding(text, vocabulary_size, emb_dim, random_state=random_state,
-                                name="text_emb")
-        conv_text = SequenceConv1dStack([text_e], [emb_dim], n_filts, bn_flag,
+        text_char_e, t_c_emb = Embedding(text, vocabulary_size, emb_dim, random_state=random_state,
+                                         name="text_char_emb")
+        text_phone_e, t_p_emb = Embedding(text, vocabulary_size, emb_dim, random_state=random_state,
+                                          name="text_phone_emb")
+
+        text_e = (1. - mask) * text_char_e + mask * text_phone_e
+
+        # masks are either 0 or 1... use embed + voc size of two so that text and mask embs have same size / same impact on the repr
+        mask_e, m_emb = Embedding(mask, 2, emb_dim, random_state=random_state,
+                                  name="mask_emb")
+        conv_text = SequenceConv1dStack([text_e + mask_e], [emb_dim], n_filts, bn_flag,
                                         n_stacks=n_stacks,
                                         kernel_sizes=[(1, 1), (3, 3), (5, 5)],
                                         name="enc_conv1", random_state=random_state)
 
+        # text_mask and mask_mask should be the same, doesn't matter which one we use
         bitext = BiLSTMLayer([conv_text], [n_filts],
                              enc_units,
                              input_mask=text_mask,
@@ -210,6 +229,8 @@ def create_graph():
                     "out_mel_mask",
                     "text",
                     "text_mask",
+                    "mask",
+                    "mask_mask",
                     "bias",
                     "cell_dropout",
                     "prenet_dropout",
@@ -276,7 +297,7 @@ def loop(sess, itr, extras, stateful_args):
         if noise_scale < .5:
             noise_scale = .5
     """
-    mels, mel_mask, text, text_mask, reset = itr.next_masked_batch()
+    mels, mel_mask, text, text_mask, mask, mask_mask, reset = itr.next_masked_batch()
     in_m = mels[:-1]
     in_mel_mask = mel_mask[:-1]
 
@@ -312,6 +333,8 @@ def loop(sess, itr, extras, stateful_args):
             vs.bn_flag: 0.,
             vs.text: text,
             vs.text_mask: text_mask,
+            vs.mask: mask,
+            vs.mask_mask: mask_mask,
             vs.att_w_init: att_w_init,
             vs.att_k_init: att_k_init,
             vs.att_h_init: att_h_init,

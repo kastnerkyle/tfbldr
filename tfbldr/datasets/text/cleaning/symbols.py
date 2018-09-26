@@ -13,6 +13,7 @@ _eos = '~'
 
 _phones = ['aa', 'ae', 'ah', 'ao', 'aw', 'ay', 'b', 'ch', 'd', 'dh', 'eh', 'er', 'ey', 'f', 'g', 'hh', 'ih', 'iy', 'jh', 'k', 'l', 'm', 'n', 'ng', 'ow', 'oy', 'p', 'r', 's', 'sh', 't', 'th', 'uh', 'uw', 'v', 'w', 'y', 'z', 'zh', ' ']
 special = [s for s in "!\',-.:?"]
+_pau_phones = _phones + [s for s in ["1","2","3","4"]]
 _phones = _phones + special
 
 _characters = 'abcdefghijklmnopqrstuvwxyz!\',-.:? '
@@ -26,4 +27,5 @@ _rules = 'abcdefghijklmnopqrstuvwxyz&^!\',-.:? '
 # Export all symbols:
 char_symbols = [_pad, _eos] + list(_characters)# + _arpabet
 phone_symbols = [_pad, _eos] + list(_phones)# + _arpabet
+pau_phone_symbols = [_pad, _eos] + list(_pau_phones)
 rule_symbols = [_pad, _eos] + list(_rules)# + _arpabet

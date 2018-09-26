@@ -1803,7 +1803,8 @@ def GaussianAttentionCell(list_of_step_inputs, list_of_step_input_dims,
         lb_t = tf.expand_dims(lb_t, axis=2)
         lk_t = tf.expand_dims(lk_t, axis=2)
         phi = tf.exp(-tf.square(lk_t - lu) * lb_t) * la_t
-        phi = tf.reduce_sum(phi, axis=1, keepdims=True)
+        # keepdims now has to be keep_dims... ugh
+        phi = tf.reduce_sum(phi, axis=1)[:, None]
         return phi
 
     phi_t = calc_phi(k_t, a_t, b_t, u)

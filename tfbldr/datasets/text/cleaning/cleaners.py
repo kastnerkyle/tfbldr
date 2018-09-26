@@ -145,3 +145,7 @@ def english_cleaners(text):
 def english_phone_cleaners(text):
   '''Pipeline for English phones.'''
   return text
+
+def english_phone_pause_cleaners(text):
+  '''Pipeline for English phones.'''
+  return text

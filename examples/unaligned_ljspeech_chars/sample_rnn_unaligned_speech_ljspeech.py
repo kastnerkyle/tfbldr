@@ -45,7 +45,7 @@ config = tf.ConfigProto(
 ljspeech = rsync_fetch(fetch_ljspeech, "leto01")
 #ljspeech = fetch_ljspeech()
 wavfiles = ljspeech["wavfiles"]
-if args.input_type == "phone":
+if args.input_type == "phone" or args.input_type == "pause":
     txtfiles = ljspeech["phonefiles"]
 else:
     txtfiles = ljspeech["txtfiles"]
@@ -72,14 +72,16 @@ elif args.input_type == "phone":
     itr = wavfile_caching_mel_tbptt_iterator(wavfiles, txtfiles, batch_size, seq_len,
                                              clean_names=["english_phone_cleaners",],
                                              start_index=.95, shuffle=True, random_state=itr_random_state)
+elif args.input_type == "pause":
+    itr = wavfile_caching_mel_tbptt_iterator(wavfiles, txtfiles, batch_size, seq_len,
+                                             clean_names=["english_phone_pause_cleaners",],
+                                             start_index=.95, shuffle=True, random_state=itr_random_state)
 else:
     raise ValueError("Unknown argument to --inp {}".format(args.input_type))
 
 mels, mel_mask, text, text_mask, reset = itr.next_masked_batch()
 if args.test == "valid":
     n_to_sample = 4
-    sonify_steps = 100
-    gl_steps = 100
 elif args.test in ["basic", "quote", "full", "taco_prosody", "taco_small", "custom"]:
     with open("{}_test.txt".format(args.test)) as f:
         lines = f.readlines()
@@ -92,6 +94,12 @@ elif args.test in ["basic", "quote", "full", "taco_prosody", "taco_small", "cust
             l_p = pronounce_chars(l)
             int_lines.append(itr.transform_txt(l_p, l))
             print(itr.inverse_transform_txt(int_lines[-1]))
+        if args.input_type == "pause":
+            l_p = pronounce_chars(l)
+            int_lines.append(itr.transform_txt(l_p, l))
+            print(l_p)
+            # FIX INVERSION!!!!!!
+            #print(itr.inverse_transform_txt(int_lines[-1]))
         else:
             int_lines.append(itr.transform_txt(l))
             print(itr.inverse_transform_txt(int_lines[-1]))
