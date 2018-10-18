@@ -7,6 +7,7 @@ import os
 from collections import OrderedDict
 from unidecode import unidecode
 import gzip
+import cleaners
 
 punct_rules = """
 [ ]'=/ /;
@@ -1154,6 +1155,95 @@ def load_cmu():
 
 def remove_non_ascii(text):
     return unidecode(unicode(text, encoding = "utf-8"))
+
+
+def cmu_g2p(line, raw_line, verbose=False):
+    if raw_line is None:
+        raise ValueError("Must pass raw_line to cmu_g2p")
+    global cmu
+    if cmu is None:
+        load_cmu()
+
+    line = line.replace(",", "")
+    line = line.replace(";", "")
+    line = line.replace('"', "")
+    line = line.replace("[", "")
+    line = line.replace("]", "")
+    line = line.replace(".", "")
+    line = line.replace("!", "")
+    line = line.replace("?", "")
+
+    if verbose:
+        print(line)
+
+    word_split = [li for li in line.split(" ") if li != ""]
+    raw_word_split = [li for li in raw_line.split(" ") if li != ""]
+    if verbose:
+        print(word_split)
+
+    out = []
+    for n, li in enumerate(word_split):
+        if raw_word_split[n] in cmu:
+            ri = ([None], cmu[raw_word_split[n]][0])
+            #print("WORKING?")
+            #print("")
+            #from IPython import embed; embed(); raise ValueError()
+        elif "(" in raw_word_split[n] and ")" in raw_word_split[n]:
+            print("HANDLE PRONOUNCE")
+            from IPython import embed; embed(); raise ValueError()
+        elif li in cmu:
+            ri = ([None], cmu[li][0])
+        else:
+            ri = ([None], None)
+        out.append(ri)
+        """
+            # the "don't" case...
+            # multi prune here for speed up, cleaners.english_cleaners is not exactly speedy...
+            all_semi_match = sorted(cmu.keys())
+            for c in li:
+                all_semi_match = [asm for asm in all_semi_match if c in asm]
+            all_semi_match = [asm for asm in all_semi_match if cleaners.english_cleaners(asm) == li]
+            if len(all_semi_match) > 0:
+                prons = []
+                for asm in all_semi_match:
+                    prons.extend(cmu[asm])
+                if "(" in li and ")" in li and len(prons) > 1:
+                    print("HANDLE PRONOUNCE NO MATCH CLAUSE")
+                    from IPython import embed; embed(); raise ValueError()
+                else:
+                    # I'd vs id ... oh no. we cannot handle this case :|
+                    ri = ([None], prons[0])
+                out.append(ri)
+            else:
+                out.append(([None], None))
+         """
+
+    fin = []
+    for p in out:
+        if p[0] == [None]:
+            pi = p[1]
+        else:
+            pi = [i for i in p[1] if "<" not in i]
+            pi = " ".join(pi).split(" ")
+            if verbose:
+                print(p[0])
+        if pi == None:
+            fin.append(pi)
+            continue
+
+        part = []
+        for pii in pi:
+            if "0" in pii:
+                pp = pii[:-1]
+            elif "1" in pii:
+                pp = pii[:-1]
+            elif "2" in pii:
+                pp = pii[:-1]
+            else:
+                pp = pii
+            part.append("@" + pp)
+        fin.append("".join(part))
+    return [f.lower() if f is not None else f for f in fin]
 
 
 def hybrid_g2p(line, verbose=False):

@@ -1,2 +1,5 @@
 write your own sentences here.
 it can be anything your heart desires.
+this is really awesome!
+this is text-to-speech online demonstration by Tacotron 2 and WaveNet.
+thanks for your patience.

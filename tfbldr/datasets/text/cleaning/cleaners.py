@@ -142,6 +142,15 @@ def english_cleaners(text):
   return text
 
 
+def english_minimal_cleaners(text):
+  '''Pipeline for English text, including number and abbreviation expansion.'''
+  text = convert_to_ascii(text)
+  text = lowercase(text)
+  text = expand_numbers(text)
+  text = collapse_whitespace(text)
+  return text
+
+
 def english_phone_cleaners(text):
   '''Pipeline for English phones.'''
   return text

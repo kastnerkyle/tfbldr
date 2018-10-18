@@ -359,7 +359,17 @@ def archive_tfbldr():
             f.writelines(command_string)
 
     save_script_path = code_snapshot_dir + os.path.sep + get_script() + ".py"
-    lib_dir = str(os.sep).join(save_script_path.split(os.sep)[:-2])
+    script_name = get_script() + ".py"
+    script_location = os.path.abspath(script_name)
+    # find first occurence of "tfbldr", should be the name of the library itself
+    lib_root_idx = [n for n, ch in enumerate(script_location.split(os.sep)) if ch == "tfbldr"]
+
+    if len(lib_root_idx) < 1:
+        logger.info("WARNING: Saving code expects the github repo to be in a folder named 'tfbldr' - if you changed the root folder name on cloning this will need fixing!!!")
+    lib_root_idx = lib_root_idx[0]
+    # tfbldr/tfbldr is the root of the true library itself
+    parts = script_location.split(os.sep)[:(lib_root_idx + 1)] + ['tfbldr']
+    lib_dir = str(os.sep).join(parts)
     save_lib_path = code_snapshot_dir + os.path.sep + "tfbldr_archive.zip"
 
     existing_reports = glob.glob(os.path.join(checkpoint_dir, "*.html"))
@@ -372,8 +382,6 @@ def archive_tfbldr():
 
     if not os.path.exists(save_script_path) or empty:
         logger.info("Saving code archive %s at %s" % (lib_dir, save_lib_path))
-        script_name = get_script() + ".py"
-        script_location = os.path.abspath(script_name)
         shutil.copy2(script_location, save_script_path)
         zip_dir(lib_dir, save_lib_path)
 
@@ -635,7 +643,7 @@ def run_loop(sess,
             train_itr_steps_taken += 1
             minibatch_train_count.append(train_itr_steps_taken)
             if (i + 1) == n_train_steps_per or (time.time() - last_status) > status_every_s:
-                logger.info("train step {}/{}, overall train step {}".format(tsi + 1, n_train_steps_per, train_itr_steps_taken))
+                logger.info("[{}, script {}] train step {}/{}, overall train step {}".format(hostname, script, tsi + 1, n_train_steps_per, train_itr_steps_taken))
                 for n, tl in enumerate(all_train_loss):
                     logger.info("train loss {} {}, overall train average {}".format(n + 1, tl, np.mean(overall_train_loss[n] + this_train_loss[n])))
                 logger.info(" ")
@@ -690,7 +698,7 @@ def run_loop(sess,
                 valid_itr_steps_taken += 1
                 minibatch_valid_count.append(valid_itr_steps_taken)
                 if (i + 1) == n_valid_steps_per or (time.time() - last_status) > status_every_s:
-                    logger.info("valid step {}/{}, overall valid step {}".format(vsi + 1, n_valid_steps_per, valid_itr_steps_taken))
+                    logger.info("[{}, script {}] valid step {}/{}, overall valid step {}".format(hostname, script, vsi + 1, n_valid_steps_per, valid_itr_steps_taken))
                     for n, vl in enumerate(all_valid_loss):
                         logger.info("valid loss {} {}, overall valid average {}".format(n, vl, np.mean(overall_valid_loss[n] + this_valid_loss[n])))
                     logger.info(" ")

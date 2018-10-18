@@ -1,8 +1,8 @@
-from cleaning.eng_rules import hybrid_g2p, rulebased_g2p
+from cleaning.eng_rules import cmu_g2p, hybrid_g2p, rulebased_g2p
 from cleaning.cleaners import english_cleaners
 import re
 
-def pronounce_chars(line, int_timing_punct=True):
+def pronounce_chars(line, raw_line=None, cmu_only=False, int_timing_punct=True):
     # cleaners strip things...
     puncts = ["!",",",":","?","."]
     #puncts_timing = ["4","1","1","4", "4"]
@@ -17,7 +17,12 @@ def pronounce_chars(line, int_timing_punct=True):
     else:
         end_punct = (0, " ")
     line = english_cleaners(line)
+    if cmu_only:
+        r0 = cmu_g2p(line, raw_line)
+        return r0
+
     r = hybrid_g2p(line)
+
     if any([p in line for p in puncts]):
         new = []
         psym = r.strip().split(" ")
