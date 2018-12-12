@@ -5,7 +5,6 @@ import re
 import json
 import os
 from collections import OrderedDict
-from unidecode import unidecode
 import gzip
 import cleaners
 
@@ -1154,6 +1153,7 @@ def load_cmu():
 
 
 def remove_non_ascii(text):
+    from unidecode import unidecode
     return unidecode(unicode(text, encoding = "utf-8"))
 
 
