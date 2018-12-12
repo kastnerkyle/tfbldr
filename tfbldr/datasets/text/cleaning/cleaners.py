@@ -13,7 +13,6 @@ hyperparameter. Some cleaners are English-specific. You'll typically want to use
 '''
 
 import re
-from unidecode import unidecode
 from .numbers import normalize_numbers
 from .eng_rules import rulebased_g2p
 
@@ -88,6 +87,7 @@ def collapse_whitespace(text):
 
 
 def convert_to_ascii(text):
+  from unidecode import unidecode
   unicode_content = text.decode('utf-8')
   return unidecode(unicode_content)
 
