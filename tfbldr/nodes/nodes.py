@@ -346,6 +346,91 @@ def make_numpy_weights(in_dim, out_dims, random_state, init=None,
     return ws
 
 
+def VqSeqEmbedding(input_tensor, input_dim, count_index, modulo_len,
+                   embedding_dim,
+                   random_state=None,
+                   init="embedding_normal",
+                   scale="default",
+                   strict=None, name=None):
+    """
+    Will use stop_grad_trick to give a straighthrough estimator for gradient
+    """
+    if random_state is None:
+        raise ValueError("Must pass instance of np.random.RandomState!")
+    if init != "embedding_normal":
+        raise ValueError("Other init values besides 'embedding_normal' not yet supported, got {}".format(init))
+    if scale != "default":
+        raise ValueError("Scale values besides 'default' not yet supported, got {}".format(scale))
+
+    if name is None:
+        name = _get_name()
+
+    name_w = name + "_vqembedding_w"
+    name_out = name + "_vqembedding_out"
+
+    if strict is None:
+        strict = get_strict_mode_default()
+
+    if strict:
+        cur_defs = get_params_dict()
+        if name_w in cur_defs:
+            raise ValueError("Name {} already created in params dict!".format(name_w))
+
+    expanded_dim = int(embedding_dim * modulo_len)
+    try:
+        emb = _get_shared(name_w)
+    except NameError:
+        #logger.info("VqEmbedding layer {} initialized using init {}".format(name, init))
+        embedding_weight, = make_numpy_weights(input_dim, [expanded_dim],
+                                               random_state, init=init,
+                                               scale=scale, name=name_w)
+        embedding_weight = embedding_weight.transpose(1, 0)
+        emb = tf.Variable(embedding_weight, trainable=True)
+        _set_shared(name_w, emb)
+    np_subsets = np.array([i * embedding_dim + np.arange(embedding_dim) for i in range(modulo_len)])
+    subsets = tf.Variable(np_subsets, trainable=False)
+
+    def _vqcore(input_tensor, emb):
+        emb_r = tf.transpose(emb, (1, 0))
+        ishp = _shape(input_tensor)
+        extender = [None] * (len(ishp) - 1)
+        sq_diff = tf.square(input_tensor[..., None] - emb_r.__getitem__(extender))
+        sum_sq_diff = tf.reduce_sum(sq_diff, axis=-2)
+        discrete_latent_idx = tf.argmin(sum_sq_diff, axis=-1)
+        shp = _shape(discrete_latent_idx)
+        flat_idx = tf.cast(tf.reshape(discrete_latent_idx, (-1,)), tf.int32)
+        lu_vectors = tf.nn.embedding_lookup(emb, flat_idx)
+        shp2 = _shape(lu_vectors)
+        if len(ishp) == 4:
+            z_q_x = tf.reshape(lu_vectors, (-1, shp[1], shp[2], shp2[-1]))
+        elif len(ishp) == 3:
+            z_q_x = tf.reshape(lu_vectors, (-1, shp[1], shp2[-1]))
+        elif len(ishp) == 2:
+            z_q_x = tf.reshape(lu_vectors, (-1, shp2[-1]))
+        else:
+            raise ValueError("Unknown input tensor dim {}, only 2, 3, 4 currently supported".format(len(ishp)))
+        return z_q_x, discrete_latent_idx
+
+    # More proper ways here
+    # https://uoguelph-mlrg.github.io/tensorflow_gradients/
+    # but stop grad trick works fine for this
+    #https://stackoverflow.com/questions/36456436/how-can-i-define-only-the-gradient-for-a-tensorflow-subgraph/36480182#36480182
+    mod_t = tf.mod(count_index, modulo_len)
+    sub_emb = tf.nn.embedding_lookup(emb, subsets[mod_t])
+    z_q_x, discrete_latent_idx = _vqcore(input_tensor, sub_emb)
+    non_st_z_q_x = tf.identity(z_q_x)
+    # straight through trick
+    # in general for g(x) desired gradient, y = f(x) desired forward
+    # t = g(x)
+    # y = t + tf.stop_gradient(f(x) - t)
+    # Here, use identity since we want g(x) to be straight-through
+    t = tf.identity(input_tensor)
+    z_q_x = t + tf.stop_gradient(z_q_x - t)
+    z_q_x = tf.identity(z_q_x, name=name_out)
+    # Need *both* straight through quantized and non-st for embedding loss
+    return z_q_x, discrete_latent_idx, non_st_z_q_x, emb
+
+
 def VqEmbedding(input_tensor, input_dim, embedding_dim,
                 random_state=None,
                 init="embedding_normal",
@@ -475,10 +560,7 @@ def Embedding(indices, n_symbols, output_dim, random_state=None,
     nd = len(shp)
     lu = tf.nn.embedding_lookup(vectors, ii)
     if nd == 3:
-        print("nd3 check in embedding")
-        from IPython import embed; embed(); raise ValueError()
         lu = lu[:, :, 0]
-        lu = lu[:, 0]
     elif nd == 2:
         lu = lu[:, 0]
     elif nd == 4:
@@ -486,6 +568,35 @@ def Embedding(indices, n_symbols, output_dim, random_state=None,
     else:
         raise ValueError("Input dimension not handled, Embedding input shape {} results in shape {}".format(shp, _shape(lu)))
     return lu, vectors
+
+
+def PositionalEncoding(indices, n_symbols, output_dim, max_len=500, cycle_scale=10000, random_state=None,
+                       init="embedding_normal", scale=1., strict=None, name=None):
+    pos_name = name + "_pos_cyclic"
+    emb_name = name + "_embedding"
+
+    def sincos(x, i):
+        if i % 2 == 0:
+            return np.sin(x)
+        return np.cos(x)
+
+    pe = tf.convert_to_tensor([sincos(pos / (cycle_scale ** (2 * i / float(output_dim))), i)
+                               for pos in range(1, max_len + 1)
+                               for i in range(1, output_dim + 1)])
+    pe = tf.reshape(pe, [-1, max_len, output_dim])
+    pe = tf.transpose(pe, [1, 0, 2])
+
+    e_inds, emb = Embedding(indices, n_symbols, output_dim, random_state=random_state,
+                            init=init, scale=scale, strict=strict, name=emb_name)
+
+    # hardcode 3d assumption for now
+    shp = _shape(indices)
+    if len(shp) == 3:
+        faker = tf.ones_like(indices)[:, 0, 0]
+    else:
+        raise ValueError("Currently unsupported input shape {} to PositionalEncoding".format(shp))
+    cl = tf.cast(tf.reduce_sum(faker), tf.int32)
+    return tf.add(e_inds, pe[:cl]), emb
 
 
 def Bilinear(left_input, left_dim, right_input, right_dim, random_state=None,
@@ -525,9 +636,83 @@ def Bilinear(left_input, left_dim, right_input, right_dim, random_state=None,
     return out
 
 
+def MultiheadAttention(value, key, query, output_dim, n_heads=8, mask=False, random_state=None,
+                       name=None, init=None, scale="default", biases=True, bias_offset=0.,
+                       strict=None, debug=False):
+    if name is None:
+        name = _get_name()
+
+    d_k = _shape(key)[-1]
+    assert d_k % n_heads == 0
+    p_dim = d_k // n_heads
+    proj_k_name = name + "mheadatt_split_k"
+    proj_v_name = name + "mheadatt_split_v"
+    proj_q_name = name + "mheadatt_split_q"
+    proj_o_name = name + "mheadatt_split_o"
+    def l2a(x):
+        ss = _shape(x)[:2] + [p_dim, n_heads]
+        return tf.transpose(tf.reshape(x, ss), (0, 1, 3, 2))
+    kr = Linear([key], [d_k], output_dim, random_state=random_state,
+           name=proj_k_name, init=init, scale=scale, biases=biases, bias_offset=bias_offset,
+           strict=strict)
+    qr = Linear([query], [d_k], output_dim, random_state=random_state,
+           name=proj_v_name, init=init, scale=scale, biases=biases, bias_offset=bias_offset,
+           strict=strict)
+    vr = Linear([value], [d_k], output_dim, random_state=random_state,
+           name=proj_q_name, init=init, scale=scale, biases=biases, bias_offset=bias_offset,
+           strict=strict)
+    ks = l2a(kr)
+    qs = l2a(qr)
+    vs = l2a(vr)
+    def kq_attention(q, k, v, mask=False):
+        # reverse order of input args just like diagram
+        d = _shape(k)[-1]
+        kt = tf.transpose(k, (0, 1, 3, 2))
+        scores = tf.matmul(q, kt) / np.sqrt(d)
+        if mask:
+            diag_vals = tf.ones_like(scores[0, 0, :, :])
+            tril = tf.linalg.LinearOperatorLowerTriangular(diag_vals).to_dense()
+            scores = tril[None, None, :, :] * scores + (tf.abs(1. - tril) * -1E9)
+        pp = tf.nn.softmax(scores, axis=-1)
+        res = tf.transpose(tf.matmul(pp, v), (2, 0, 1, 3))
+        return res, pp
+
+    ks = tf.transpose(ks, (1, 2, 0, 3))
+    qs = tf.transpose(qs, (1, 2, 0, 3))
+    vs = tf.transpose(vs, (1, 2, 0, 3))
+    r, att = kq_attention(qs, ks, vs, mask=mask)
+    ss = _shape(r)[:2] + [p_dim, n_heads]
+    rf = tf.reshape(r, ss[:2] + [output_dim])
+    out = Linear([rf], [output_dim], output_dim, random_state=random_state,
+                 name=proj_o_name, init=init, scale=scale, biases=biases, bias_offset=bias_offset,
+           strict=strict)
+    return out, att
+
+
+def TransformerBlock(value, key, query_and_passthrough, output_dim, n_heads=8, mask=False, random_state=None, name=None, debug=False):
+    if random_state is None:
+        raise ValueError("Must pass instance of np.random.RandomState!")
+
+    if name is None:
+        name = _get_name()
+    query = query_and_passthrough
+    if mask:
+        mask_att_proj1, mask_att1 = MultiheadAttention(query, query, query, output_dim, n_heads=n_heads, mask=True, random_state=random_state, name=name + "transformerblock_maskmhatt")
+        mo1 = LayerNorm(query + mask_att_proj1, name=name + "transformerblock_maskmhln")
+        query = mo1
+
+    att_proj1, att1 = MultiheadAttention(value, key, query, output_dim, n_heads=n_heads, mask=False, random_state=random_state, name=name + "transformerblock_mhatt")
+    o1 = LayerNorm(query + att_proj1, name=name + "transformerblock_mhln")
+
+    l1 = Linear([o1], [output_dim], 4 * output_dim, random_state=random_state, name=name + "transformerblock_iff")
+    rl1 = ReLU(l1)
+    l2 = Linear([rl1], [4 * output_dim], output_dim, random_state=random_state, name=name + "transformerblock_off")
+    return LayerNorm(o1 + l2, name=name + "transformerblock_ffln"), att1
+
+
 def Linear(list_of_inputs, list_of_input_dims, output_dim, random_state=None,
            name=None, init=None, scale="default", biases=True, bias_offset=0.,
-           strict=None):
+           dropout_flag_prob_keep=None, strict=None):
     if random_state is None:
         raise ValueError("Must pass instance of np.random.RandomState!")
     nd = _ndim(list_of_inputs[0])
@@ -567,6 +752,9 @@ def Linear(list_of_inputs, list_of_input_dims, output_dim, random_state=None,
     except NameError:
         weight = tf.Variable(weight_values, trainable=True, name=name_w)
         _set_shared(name_w, weight)
+
+    if dropout_flag_prob_keep is not None:
+        input_var = tf.nn.dropout(input_var, dropout_flag_prob_keep, seed=random_state.randint(10000))
 
     out = dot(input_var, weight)
 
@@ -762,12 +950,26 @@ def GatedMaskedConv2d(list_of_v_inputs, list_of_v_input_dims,
     if conditioning_class_input != None:
         if conditioning_num_classes is None:
             raise ValueError("If passing conditioning_class_input, must pass conditioning_num_classes")
-        c_e, emb = Embedding(conditioning_class_input, conditioning_num_classes,
-                             2 * num_feature_maps, random_state=random_state, name=name_embed)
+        n_embeds = _shape(conditioning_class_input)[-1]
+        if n_embeds == 1:
+            c_e, emb = Embedding(conditioning_class_input, conditioning_num_classes,
+                                 2 * num_feature_maps, random_state=random_state, name=name_embed)
+
+        else:
+            logger.info("GatedMaskedConv2d embedding input has dimension {} on last axis, creating {} embeddings".format(n_embeds, n_embeds))
+            c_e = None
+            for ii in range(n_embeds):
+                c_ei, embi = Embedding(conditioning_class_input[:, ii][:, None], conditioning_num_classes,
+                                       2 * num_feature_maps, random_state=random_state, name=name_embed + "_{}".format(ii))
+                if c_e is None:
+                    c_e = c_ei
+                else:
+                    c_e += c_ei
 
         shp = _shape(c_e)
         if len(shp) != 2:
             raise ValueError("conditioning_embed result should be 2D (input (N, 1)), got {}".format(shp))
+
 
     if conditioning_spatial_map != None:
         shp = _shape(conditioning_spatial_map)
@@ -917,7 +1119,6 @@ def GatedMaskedConv2d(list_of_v_inputs, list_of_v_input_dims,
     return out_v, out_h
 
 
-
 def ConvTranspose2d(list_of_inputs, list_of_input_dims, num_feature_maps,
                     kernel_size=(3, 3),
                     strides=None,
@@ -1046,6 +1247,48 @@ def ConvTranspose2d(list_of_inputs, list_of_input_dims, num_feature_maps,
         out = out + biases[None, None, None]
     out = tf.identity(out, name=name_out)
     return out
+
+
+def LayerNorm(input_tensor,
+              gamma_init=1., beta_init=0.,
+              eps=1E-6,
+              strict=None,
+              name=None):
+    if name is None:
+        name = _get_name()
+
+    if strict is None:
+        strict = get_strict_mode_default()
+
+    name_scale = name + "_layernorm_s"
+    name_beta = name + "_layernorm_b"
+
+    if strict:
+        cur_defs = get_params_dict()
+        if name_scale in cur_defs:
+            raise ValueError("Name {} already created in params dict!".format(name_scale))
+
+        if name_beta in cur_defs:
+            raise ValueError("Name {} already created in params dict!".format(name_beta))
+
+    try:
+        scale = _get_shared(name_scale)
+    except NameError:
+        scale = tf.Variable(gamma_init * tf.ones([input_tensor.get_shape()[-1]]), trainable=True, name=name_scale)
+        _set_shared(name_scale, scale)
+
+    try:
+        beta = _get_shared(name_beta)
+    except NameError:
+        beta = tf.Variable(beta_init * tf.ones([input_tensor.get_shape()[-1]]), trainable=True, name=name_beta)
+        _set_shared(name_beta, beta)
+
+    im, istd = tf.nn.moments(input_tensor, [-1])
+    im = im[..., None]
+    istd = istd[..., None]
+    nm = ((input_tensor - im) / (istd + eps))
+    r = scale * nm + beta
+    return r
 
 
 def BatchNorm2d(input_tensor, train_test_flag,
@@ -1328,6 +1571,130 @@ def LSTMCell(list_of_inputs, list_of_input_dims,
     return final_out, (h, c)
 
 
+def BiLSTMLayer(list_of_inputs, list_of_input_dims,
+                num_units,
+                previous_forward_hidden=None, previous_forward_cell=None,
+                previous_reverse_hidden=None, previous_reverse_cell=None,
+                output_dim=None,
+                input_mask=None,
+                random_state=None,
+                name=None, init=None, scale="default",
+                forget_bias=1.,
+                cell_dropout=None,
+                strict=None):
+    if input_mask == None:
+        raise ValueError("No input mask currently unsupported")
+    if name is None:
+        name = _get_name()
+    name = name + "_bidirlstm_layer"
+    name_proj = name + "_proj"
+    hidden_dim = 4 * num_units
+    in_proj = Linear(list_of_inputs, list_of_input_dims,
+                     hidden_dim,
+                     random_state=random_state,
+                     name=name_proj,
+                     init=init, strict=strict)
+    if previous_forward_hidden == None:
+        h1_f_init = 0. * in_proj[0, :, :num_units]
+    else:
+        h1_f_init = previous_forward_hidden
+    if previous_reverse_hidden == None:
+        h1_b_init = 0. * in_proj[0, :, :num_units]
+    else:
+        h1_b_init = previous_reverse_hidden
+    if previous_forward_cell == None:
+        c1_f_init = 0. * in_proj[0, :, :num_units]
+    else:
+        c1_f_init = previous_forward_cell
+    if previous_reverse_cell == None:
+        c1_b_init = 0. * in_proj[0, :, :num_units]
+    else:
+        c1_b_init = previous_reverse_cell
+
+    def step(inp_t, inp_mask_t,
+             rev_inp_t, rev_inp_mask_t,
+             h1_f_tm1, c1_f_tm1, h1_b_tm1, c1_b_tm1):
+        output, s = LSTMCell([inp_t],
+                             [hidden_dim],
+                             h1_f_tm1, c1_f_tm1,
+                             num_units,
+                             input_mask=inp_mask_t,
+                             random_state=random_state,
+                             cell_dropout=cell_dropout,
+                             name=name + "forward_rnn",
+                             init=init)
+        h1_f_t = s[0]
+        c1_f_t = s[1]
+
+        output, s = LSTMCell([rev_inp_t],
+                             [hidden_dim],
+                             h1_b_tm1, c1_b_tm1,
+                             num_units,
+                             input_mask=rev_inp_mask_t,
+                             random_state=random_state,
+                             cell_dropout=cell_dropout,
+                             name=name + "reverse_rnn",
+                             init=init)
+        h1_b_t = s[0]
+        c1_b_t = s[1]
+        return h1_f_t, c1_f_t, h1_b_t, c1_b_t
+
+    r = scan(step,
+             [in_proj, input_mask, in_proj[::-1], input_mask[::-1]],
+             [h1_f_init, c1_f_init, h1_b_init, c1_b_init])
+    return tf.concat([r[0], r[2][::-1]], axis=-1)
+
+
+def SequenceConv1dStack(list_of_inputs, list_of_input_dims, num_feature_maps,
+                        batch_norm_flag,
+                        n_stacks=1,
+                        residual=True,
+                        activation="relu",
+                        kernel_sizes=[(1, 1), (3, 3), (5, 5)],
+                        border_mode="same",
+                        init=None, scale="default",
+                        biases=True, bias_offset=0.,
+                        name=None, random_state=None, strict=None):
+    if name is None:
+        name = _get_name()
+
+    # assuming they come in as length, batch, features
+    tlist = [tf.transpose(li[:, None], (2, 1, 0, 3)) for li in list_of_inputs]
+
+    c = Conv2d(tlist, list_of_input_dims, len(kernel_sizes) * num_feature_maps,
+               kernel_size=(1, 1),
+               name=name + "_convpre", random_state=random_state,
+               border_mode=border_mode, init=init, scale=scale, biases=biases,
+               bias_offset=bias_offset, strict=strict)
+    prev_layer = c
+    for ii in range(n_stacks):
+        cs = []
+        for jj, ks in enumerate(kernel_sizes):
+            c = Conv2d([prev_layer], [len(kernel_sizes) * num_feature_maps], num_feature_maps,
+                       kernel_size=ks,
+                       name=name + "_conv{}_ks{}".format(ii, jj), random_state=random_state,
+                       border_mode=border_mode, init=init, scale=scale, biases=biases,
+                       bias_offset=bias_offset, strict=strict)
+            cs.append(c)
+        layer = tf.concat(cs, axis=-1)
+        bn_l = BatchNorm2d(layer, batch_norm_flag, name="bn_conv{}".format(ii))
+        r_l = ReLU(bn_l)
+        prev_layer += r_l
+    post = Conv2d([prev_layer], [len(kernel_sizes) * num_feature_maps], num_feature_maps,
+                   kernel_size=(1, 1),
+                   name=name + "_convpost", random_state=random_state,
+                   border_mode=border_mode, init=init, scale=scale, biases=biases,
+                   bias_offset=bias_offset, strict=strict)
+    return tf.transpose(post[:, 0], (1, 0, 2))
+
+
+def AdditiveGaussianNoise(input_tensor, noise_std_mult, noise_mean=0.0, random_state=None):
+    if random_state is None:
+        raise ValueError("random_state argument is required")
+    noise = tf.random_normal(shape=tf.shape(input_tensor), mean=noise_mean, stddev=1., dtype=tf.float32, seed=random_state.randint(1000000))
+    return input_tensor + noise_std_mult * noise
+
+
 def GaussianAttentionCell(list_of_step_inputs, list_of_step_input_dims,
                           previous_state_list,
                           previous_attention_position,
@@ -1337,6 +1704,7 @@ def GaussianAttentionCell(list_of_step_inputs, list_of_step_input_dims,
                           previous_attention_weight,
                           att_dim=10,
                           attention_scale=1.,
+                          step_op="exp",
                           cell_type="lstm",
                           name=None,
                           input_mask=None,
@@ -1399,14 +1767,32 @@ def GaussianAttentionCell(list_of_step_inputs, list_of_step_input_dims,
         random_state=random_state,
         strict=strict, init=ctx_forward_init)
     """
-
-    a_t = tf.exp(a_t)
-    b_t = tf.exp(b_t)
-    a_t = tf.identity(a_t, name=name + "_a_scale")
-    b_t = tf.identity(b_t, name=name + "_b_scale")
-    step_size = attention_scale * tf.exp(k_t)
-    k_t = k_tm1 + step_size
-    k_t = tf.identity(k_t, name=name + "_position")
+    if step_op == "exp":
+        a_t = tf.exp(a_t)
+        b_t = tf.exp(b_t)
+        a_t = tf.identity(a_t, name=name + "_a_scale")
+        b_t = tf.identity(b_t, name=name + "_b_scale")
+        step_size = attention_scale * tf.exp(k_t)
+        k_t = k_tm1 + step_size
+        k_t = tf.identity(k_t, name=name + "_position")
+    elif step_op == "softplus":
+        a_t = tf.exp(a_t)
+        b_t = tf.exp(b_t)
+        a_t = tf.identity(a_t, name=name + "_a_scale")
+        b_t = tf.identity(b_t, name=name + "_b_scale")
+        step_size = attention_scale * tf.nn.softplus(k_t)
+        k_t = k_tm1 + step_size
+        k_t = tf.identity(k_t, name=name + "_position")
+    elif step_op == "relu":
+        a_t = tf.exp(a_t)
+        b_t = tf.exp(b_t)
+        a_t = tf.identity(a_t, name=name + "_a_scale")
+        b_t = tf.identity(b_t, name=name + "_b_scale")
+        step_size = attention_scale * tf.nn.relu(k_t)
+        k_t = k_tm1 + step_size
+        k_t = tf.identity(k_t, name=name + "_position")
+    else:
+        raise ValueError("{} not a known step_op".format(step_op))
 
     # tf.shape and tensor.shape are not the same...
     u = tf.cast(tf.range(0., limit=tf.shape(full_conditioning_tensor)[0], delta=1.), dtype=tf.float32)
@@ -1417,7 +1803,8 @@ def GaussianAttentionCell(list_of_step_inputs, list_of_step_input_dims,
         lb_t = tf.expand_dims(lb_t, axis=2)
         lk_t = tf.expand_dims(lk_t, axis=2)
         phi = tf.exp(-tf.square(lk_t - lu) * lb_t) * la_t
-        phi = tf.reduce_sum(phi, axis=1, keepdims=True)
+        # keepdims now has to be keep_dims... ugh
+        phi = tf.reduce_sum(phi, axis=1)[:, None]
         return phi
 
     phi_t = calc_phi(k_t, a_t, b_t, u)
@@ -1475,6 +1862,15 @@ def DiscreteMixtureOfLogistics(list_of_inputs, list_of_input_dims, n_output_chan
     n_output_channels = int(n_output_channels)
     # assume all the same...
     shp0 = _shape(list_of_inputs[0])
+    if len(shp0) == 3:
+        # can we project these to the right size???
+        list_of_inputs = [tf.transpose(li, (1, 0, 2))[..., None] for li in list_of_inputs]
+        list_of_input_dims = [1] * len(list_of_inputs)
+    elif len(shp0) == 4:
+        pass
+    else:
+        raise ValueError("Unknown behavior for input shape {} in DML".format(shp0))
+    shp0 = _shape(list_of_inputs[0])
     for li in list_of_inputs:
         assert len(shp0) == len(_shape(li))
     if len(shp0) == 4:
@@ -1501,7 +1897,7 @@ def DiscreteMixtureOfLogistics(list_of_inputs, list_of_input_dims, n_output_chan
             # mixtures, means, scales
             return l[..., 2 * boundary:], l[..., :boundary], l[..., boundary:2 * boundary]
     else:
-        raise ValueError("Input shapes have length {}, not currently supported".format(len(shp0)))
+        raise ValueError("Input shapes have length {}, channel_correlations not currently supported".format(len(shp0)))
 
 
 def log_sum_exp(x):
@@ -1540,7 +1936,10 @@ def DiscreteMixtureOfLogisticsCost(in_mixtures, in_means, in_lin_scales, target,
     n_output_channels = int(n_output_channels)
 
     if len(_shape(target)) != 4:
-        raise ValueError("Target shape != 4 currently unsupported")
+        if len(_shape(target)) == 3:
+            target = tf.transpose(target, (1, 0, 2))[..., None]
+        else:
+            raise ValueError("Target shape != 4 currently unsupported")
     # based on https://github.com/openai/weightnorm/blob/master/tensorflow/nn.py#L30
     # original code has 100
     # 10 * 2 * 3 + 3 * 10 + 10
